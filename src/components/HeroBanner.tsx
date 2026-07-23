@@ -13,6 +13,7 @@ import { TMDBService } from '@/src/services/TMDBService';
 import { useTitleLogo } from '@/src/hooks/useTitleLogo';
 import { getTitle, type MediaItem } from '@/src/types';
 import type { DeviceKind } from '@/src/utils/responsive';
+import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 
 interface HeroBannerProps {
   item: MediaItem;
@@ -105,7 +106,7 @@ export const HeroBanner = ({
                 onPress={() => onPlay(item)}
                 hasTVPreferredFocus
                 className="w-50 items-center justify-center rounded-md bg-foreground px-6 py-3"
-                focusedClassName="scale-[1.05] border-2 border-primary"
+                focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
               >
                 <HStack space="sm" className="items-center justify-center">
                   <Icon as={Play} className="text-black" />
@@ -116,7 +117,7 @@ export const HeroBanner = ({
             <Focusable
               onPress={() => onToggleList(item)}
               className="w-15 items-center justify-center rounded-md bg-secondary px-6 py-3"
-              focusedClassName="scale-[1.05] border-2 border-primary"
+              focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
             >
               <Icon
                 as={inMyList ? Check : Plus}
