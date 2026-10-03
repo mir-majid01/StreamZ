@@ -15,10 +15,21 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
 *.mobileprovision
+android/keystore.properties
+
+# Firebase / emulator. android/app/google-services.json is deliberately NOT
+# ignored: its values are public-by-design for a mobile client, and the API key
+# inside is restricted in the Google Cloud console instead (see spec §18).
+functions/.env
+functions/.env.*
+.firebase/
+*-debug.log
+*-error.log
 
 # Metro
 .metro-health-check*
