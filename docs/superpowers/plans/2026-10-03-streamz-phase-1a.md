@@ -1416,8 +1416,8 @@ Google Sign-In is blocked until items 1-6 are done; nothing in Tasks 18-22 can b
 10. **Provision your own TMDB v4 key.** The key committed in upstream `build-ios.yml:27-30` belongs to the original author and is already public in his history — do not use it and do not try to "rotate" it; it isn't yours. Task 27 deletes that workflow.
 11. **Jellyfin (for Phase 1B, not blocking 1A):** server installed and reachable, version recorded for the spec §13 pre-flight, and a dedicated low-privilege service account created for Functions.
 12. **Set Functions secrets** once `functions/` exists: `npx firebase-functions@latest` is not needed — use `npx -y firebase-tools@latest functions:secrets:set JELLYFIN_BASE_URL` and `...JELLYFIN_SERVICE_PASSWORD`. Never plain env, never committed.
-13. **Create your own GitHub fork and repoint `origin`.** The clone still targets `sheeshcake/Flickv4`; nothing gets pushed until that is fixed, and the repo must stay public to satisfy GPL.
-14. **Decide the first key batch** — how many keys, what duration — so Task 15's `generateKeys` can be invoked and Task 22 tested end to end with a real key.
+13. **Create your own fork and repoint `origin`** (fork URL pending from the owner; the clone still targets `sheeshcake/Flickv4`, so nothing is pushed until it is set). **The repository may stay private during development** — GPL-3.0 obligations attach at *distribution*, not before. The moment you hand out the APK you owe every recipient the corresponding source of your modified version, the unchanged `LICENSE`, and the attribution block. Plan for that as a release step, not a repo-visibility setting.
+14. **First key batch, decided 2026-10-03:** `generateKeys({ count: 10, durationDays: 30 })` — matching `config/app.keyDurationDays: 30`. The 10 plaintext keys are returned once and are never recoverable afterwards (decision 11), so store them in a password manager, not in the repo. Invoke this once Task 15 is in place so Task 22 can be tested end to end with a real key.
 
 Support contacts are already fixed in the plan: `Mirmajid@proton.me` and Telegram `@Mirmajid01`, both read only from `src/config/brand.ts`.
 
