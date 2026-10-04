@@ -7,13 +7,14 @@ import {
 } from '@/src/firebase/subscriptions/keyFormat';
 import { decideGate, routeFor, shouldRevalidate } from '@/src/firebase/subscriptions/gate';
 import { describeActivation, describeAuthError, isTransportError } from '@/src/firebase/errors';
-import type { AccessResult } from '@/src/firebase/models';
+import { CONFIG_DEFAULTS, graceMsFrom, staleMsFrom, type AccessResult } from '@/src/firebase/models';
 
 const NOW = 1_000_000_000_000;
 const DAY = 86_400_000;
 const ok: AccessResult = { status: 'authorized', expiresAt: NOW + DAY * 10, serverTimeMs: NOW };
 const base = {
   uid: 'u1',
+  liveUid: 'u1',
   live: null as AccessResult | null,
   transportFailed: false,
   lastGoodAuthorizedAt: null as number | null,
@@ -124,5 +125,82 @@ describe('error copy', () => {
     expect(isTransportError({ code: 'permission-denied' })).toBe(false);
     expect(isTransportError(new Error('boom'))).toBe(false);
     expect(isTransportError(undefined)).toBe(false);
+  });
+});
+
+// Regression tests for the review findings on commit 85cb87f.
+describe('decideGate regressions (review finding 1, 3, 6, 9)', () => {
+  const graceBase = { ...base, transportFailed: true, lastGoodAuthorizedAt: NOW - 60_000 };
+
+  it('does not let a cached authorized verdict outrank the grace window', () => {
+    expect(decideGate({ ...graceBase, live: ok })).toBe('offlineCached');
+  });
+
+  it('drops an authorized verdict to needsServerContact once grace is exhausted', () => {
+    expect(decideGate({ ...graceBase, live: ok, lastGoodAuthorizedAt: NOW - DAY - 1 }))
+      .toBe('needsServerContact');
+  });
+
+  it.each(['expired', 'revoked', 'suspended', 'disabled', 'installationCeiling'] as const)(
+    'a live %s verdict is never rescued by fresh grace',
+    (status) => {
+      expect(decideGate({ ...graceBase, live: { ...ok, status } })).toBe('blocked');
+    },
+  );
+
+  it('refuses to honour a verdict issued for a different account', () => {
+    expect(decideGate({ ...base, uid: 'u2', liveUid: 'u1', live: ok })).toBe('bootstrapping');
+  });
+
+  it('does not trust a future-dated cache entry', () => {
+    expect(decideGate({ ...base, transportFailed: true, lastGoodAuthorizedAt: NOW + DAY }))
+      .toBe('needsServerContact');
+  });
+
+  it('blocks an authorized verdict that carries no expiry ceiling', () => {
+    expect(decideGate({ ...base, live: { status: 'authorized', expiresAt: null, serverTimeMs: NOW } }))
+      .toBe('blocked');
+  });
+
+  it('treats a stale server clock inside the verdict as expiry, not as grace', () => {
+    expect(decideGate({ ...base, live: { ...ok, expiresAt: NOW - 1, serverTimeMs: NOW } }))
+      .toBe('blocked');
+  });
+});
+
+describe('units and round-trip (review findings 8, 15, 16)', () => {
+  it('converts config minutes to gate milliseconds exactly once', () => {
+    expect(graceMsFrom(CONFIG_DEFAULTS)).toBe(1440 * 60_000);
+    expect(staleMsFrom(CONFIG_DEFAULTS)).toBe(10 * 60_000);
+  });
+
+  it.each(vectors.valid)('round-trips $raw through the input formatter', ({ raw, normalized }) => {
+    expect(normalizeKeyBody(formatKeyInput(raw))).toBe(normalized);
+  });
+
+  it('documents the truncation contract for over-long input', () => {
+    // 18 chars cleaned, one FLK prefix consumed, the remaining 15 capped to 12 body chars.
+    expect(formatKeyInput('FLKFLK7H3K92PQX8KM')).toBe('FLK-FLK7-H3K9-2PQX');
+    expect(looksPlausible(formatKeyInput('FLKFLK7H3K92PQX8KM'))).toBe(false);
+  });
+
+  it('rejects a prefixed body containing a character outside the alphabet', () => {
+    for (const raw of ['FLK-7H3K-92PQ-X8LI', 'FLK-7H3K-92PQ-X8KI', 'FLK-7H3K-92PQ-X8O0', 'FLK-7H3K-92PQ-X8U0']) {
+      expect(normalizeKeyBody(raw)).toBeNull();
+    }
+  });
+});
+
+describe('transport classification (review finding 4)', () => {
+  it.each(['unavailable', 'internal', 'network-request-failed', 'deadline-exceeded',
+           'resource-exhausted', 'unknown', 'functions/deadline-exceeded'])('%s is transport', (code) => {
+    expect(isTransportError({ code })).toBe(true);
+  });
+  it.each(['permission-denied', 'unauthenticated', 'not-found', 'invalid-argument', 'cancel',
+           'cancelled'])('%s is NOT transport', (code) => {
+    expect(isTransportError({ code })).toBe(false);
+  });
+  it('falls back to support copy for an unknown activation code', () => {
+    expect(describeActivation('NOPE' as never)).toMatch(/Contact support/i);
   });
 });

@@ -78,9 +78,23 @@ describe('installationId', () => {
     expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
   });
 
-  it('replaces a corrupt stored value instead of propagating it', async () => {
-    (SecureStore.getItemAsync as jest.Mock).mockResolvedValueOnce('not-a-uuid');
-    (randomUUID as jest.Mock).mockReturnValueOnce('11111111-2222-3333-4444-555555555555');
-    expect(await getInstallationId()).toBe('11111111-2222-3333-4444-555555555555');
+
+  it('regenerates when SecureStore rejects instead of stranding the gate', async () => {
+    (SecureStore.getItemAsync as jest.Mock).mockRejectedValueOnce(
+      new Error('SecureStoreUnavailableException'),
+    );
+    (randomUUID as jest.Mock).mockReturnValueOnce('99999999-8888-7777-6666-555555555555');
+    expect(await getInstallationId()).toBe('99999999-8888-7777-6666-555555555555');
+  });
+
+  it('persists the replacement after a corrupt value', async () => {
+    (SecureStore.getItemAsync as jest.Mock).mockResolvedValueOnce('garbage');
+    (randomUUID as jest.Mock).mockReturnValueOnce('44444444-4444-4444-4444-444444444444');
+    (SecureStore.setItemAsync as jest.Mock).mockClear();
+    await getInstallationId();
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(
+      INSTALLATION_KEY,
+      '44444444-4444-4444-4444-444444444444',
+    );
   });
 });

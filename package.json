@@ -22,6 +22,7 @@
     "expo": "~57.0.7",
     "expo-application": "~57.0.2",
     "expo-brightness": "~57.0.1",
+    "expo-crypto": "~57.0.1",
     "expo-device": "~57.0.1",
     "expo-file-system": "~57.0.1",
     "expo-intent-launcher": "~57.0.1",
@@ -30,6 +31,7 @@
     "expo-navigation-bar": "~57.0.2",
     "expo-notifications": "~57.0.6",
     "expo-screen-orientation": "~57.0.1",
+    "expo-secure-store": "^57.0.4",
     "expo-status-bar": "~57.0.1",
     "lucide-react-native": "^1.25.0",
     "nativewind": "^5.0.0-preview.2",
@@ -58,8 +60,6 @@
     "@types/jest": "^29.5.14",
     "@types/react": "~19.2.2",
     "babel-plugin-module-resolver": "^5.0.3",
-    "expo-crypto": "~57.0.1",
-    "expo-secure-store": "^57.0.4",
     "jest": "^29.7.0",
     "jest-expo": "~57.0.0",
     "patch-package": "^8.0.1",
@@ -78,7 +78,9 @@
     "web": "expo start --web",
     "test": "jest",
     "typecheck": "tsc --noEmit",
-    "postinstall": "patch-package"
+    "postinstall": "patch-package",
+    "test:watch": "jest --watch",
+    "test:emulator": "firebase-tools emulators:exec --only firestore,functions \"jest --ci --testPathPattern=__tests__/(rules|functions)\""
   },
   "private": true,
   "overrides": {

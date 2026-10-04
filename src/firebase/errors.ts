@@ -21,9 +21,19 @@ const AUTH_COPY: Record<string, string> = {
   'popup-closed-by-user': 'Sign-in window was closed before it finished.',
 };
 
-const TRANSPORT_CODES = new Set(['unavailable', 'internal', 'network-request-failed']);
+// Transient conditions only. `cancelled` is deliberately excluded: a cancelled Google
+// prompt is a user action, not a network failure, and must never trigger offline grace.
+const TRANSPORT_CODES = new Set([
+  'unavailable',
+  'internal',
+  'network-request-failed',
+  'deadline-exceeded',
+  'resource-exhausted',
+  'unknown',
+]);
 
-export const describeActivation = (code: ActivateCode): string => ACTIVATION_COPY[code];
+export const describeActivation = (code: ActivateCode): string =>
+  ACTIVATION_COPY[code] ?? "We couldn't activate that key. Contact support.";
 
 export function describeAuthError(code: string): string {
   return AUTH_COPY[code] ?? 'Sign-in failed. Please try again.';

@@ -293,7 +293,7 @@ it('models carry the spec field shapes', () => {
 
 - [ ] **Step 3: Run it → FAIL, module not found.**
 - [ ] **Step 4: Write `src/firebase/models.ts`** with every type above. Timestamps are epoch **milliseconds** (`number`), not Firestore `Timestamp`, so shared types need no SDK import and client and Functions agree. State that in one comment line.
-- [ ] **Step 5: Create `fixtures/keyNormalization.json`.** Valid: `flk-7h3k-92pq-x8lm` → `7H3K92PQX8LM`; spaced lowercase; trailing whitespace. Invalid, each with `reason`: 11-char body; 13-char body; body containing `I`, `L`, `O` or `U` (Crockford base32 excludes them); empty string; `';DROP--` injection; 400 `A`s.
+- [ ] **Step 5: Create `fixtures/keyNormalization.json`.** Valid: `flk-7h3k-92pq-x8km` → `7H3K92PQX8KM`; spaced lowercase; trailing whitespace. Invalid, each with `reason`: 11-char body; 13-char body; body containing `I`, `L`, `O` or `U` (Crockford base32 excludes them); empty string; `';DROP--` injection; 400 `A`s.
 - [ ] **Step 6: Run `npm test` → PASS.**
 - [ ] **Step 7: Commit** `feat: add streamz domain models, key vectors, StreamZ label`.
 
@@ -772,8 +772,8 @@ it.each(vectors.valid)('agrees with the client on $raw', ({ raw, normalized }) =
 it.each(vectors.invalid)('rejects $raw', ({ raw }) => expect(normalizeKeyBody(raw)).toBeNull());
 it('is deterministic and never returns plaintext-shaped output', async () => {
   const { hashKey } = await import('../../functions/src/keys');
-  expect(hashKey('7H3K92PQX8LM')).toBe(hashKey('7H3K92PQX8LM'));
-  expect(hashKey('7H3K92PQX8LM')).toHaveLength(64);
+  expect(hashKey('7H3K92PQX8KM')).toBe(hashKey('7H3K92PQX8KM'));
+  expect(hashKey('7H3K92PQX8KM')).toHaveLength(64);
 });
 ```
 
@@ -892,11 +892,11 @@ export const validateAccess = onCall(async (req) => {
 
 ```ts
 it('activates an unused key and binds uid + installation', async () => {
-  seedKey({ keyId: 'k1', body: '7H3K92PQX8LM', status: 'UNUSED', expiresAt: null });
-  const r = await callActivate('u1', 'i1', 'flk-7h3k-92pq-x8lm');
+  seedKey({ keyId: 'k1', body: '7H3K92PQX8KM', status: 'UNUSED', expiresAt: null });
+  const r = await callActivate('u1', 'i1', 'flk-7h3k-92pq-x8km');
   expect(r.code).toBe('ACTIVATED');
   expect(await readKey('k1')).toMatchObject({ status: 'ACTIVE', uid: 'u1', installationId: 'i1' });
-  expect((await readKey('k1')).keyHash).not.toMatch(/7H3K92PQX8LM/);
+  expect((await readKey('k1')).keyHash).not.toMatch(/7H3K92PQX8KM/);
 });
 it('refuses the same key for a second account', async () => {
   seedActivated('k1', 'u1', 'i1');

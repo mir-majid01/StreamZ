@@ -81,7 +81,8 @@ export interface WatchSessionDoc {
   state: SessionState;
   contentId: string;
   contentTitle: string;
-  contentType: 'movie' | 'episode' | 'clip' | 'other';
+  contentType: 'movie' | 'episode' | 'clip' | 'live' | 'other';
+  providerId?: string | null;
   tmdbId?: string | null;
   season?: number | null;
   episode?: number | null;
@@ -121,3 +122,18 @@ export const CONFIG_DEFAULTS: AppConfigDoc = {
   staleSessionMinutes: 10,
   minAppVersion: '0.0.0',
 };
+
+/**
+ * Config is authored in minutes; the gate and the revalidation timer work in
+ * milliseconds. Doing this conversion anywhere else is how a 1440-minute grace
+ * silently becomes 1440 ms and every offline user is locked out.
+ */
+export const graceMsFrom = (config: AppConfigDoc): number => config.offlineGraceMinutes * 60_000;
+export const staleMsFrom = (config: AppConfigDoc): number => config.staleSessionMinutes * 60_000;
+
+/** Identity of what the player was given, for watch analytics (Task 26). */
+export interface ContentIdentity {
+  contentId: string;
+  contentTitle: string;
+  contentType: 'movie' | 'episode' | 'clip' | 'live' | 'other';
+}
