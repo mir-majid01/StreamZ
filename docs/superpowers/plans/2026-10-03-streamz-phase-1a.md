@@ -27,6 +27,7 @@ Every task's requirements implicitly include this section.
 - GPL-3.0 is non-negotiable: `LICENSE` unchanged, author credit for **Wendale Franz Dy** with a link to `https://github.com/sheeshcake/Flickv4` visible in About, repo stays public while the APK is distributed.
 - **Do not edit:** `patches/**` (breaks `patch-package` at `postinstall`), `LICENSE`, `README.md` upstream references, `CreditsScreen.tsx:59-64` attribution data, `UpdateService.ts:20` source comment, the ~15 `flick.*` AsyncStorage keys, `flick-downloads`, `flick-update.apk`, `FlickMacRtc`.
 - Live TV, watch party and Android TV are **hidden by flag, not deleted** (§2).
+- **The content backend is frozen (spec Amendment 2).** No task may add, remove, rewire, stub, reconfigure, debug, or otherwise change stream sources, resolvers, scrapers, embed hosts, or playback resolution. If a step appears to require making content play, stop and report.
 - Import alias `@/…` maps to repo root (`tsconfig.json` paths, `babel.config.js:8-17`). Use `@/src/config/brand`.
 - **Expo has changed** (AGENTS.md). Before any Expo config-plugin, prebuild or native-project step, read the v57 docs at `https://docs.expo.dev/versions/v57.0.0/` and follow them over this plan if they differ.
 - Native Firebase needs a **development build**; Expo Go cannot run it.
@@ -50,18 +51,18 @@ src/firebase/installation/installationId.ts      T6   UUID in secure-store
 src/firebase/subscriptions/gate.ts               T7   pure gate decision + revalidation timing
 src/firebase/errors.ts                           T8   SDK codes -> user-facing copy
 src/firebase/init.ts                             T9   RNFirebase bootstrap, advertising id off
-src/firebase/auth/googleAuth.ts                 T13   Google Sign-In -> Firebase credential
-src/firebase/auth/SessionProvider.tsx           T13   auth state + gate orchestration
-src/firebase/subscriptions/api.ts               T14   callable wrappers + local cache
-src/firebase/analytics/appEvents.ts             T18   GA4 event wrappers
-src/firebase/analytics/watchSession.ts          T19   session recorder, batched
-src/services/content/types.ts                   T20   ContentProvider interface
-src/services/content/SampleContentProvider.ts   T20   Sintel stand-in
-src/services/content/useContentProvider.ts      T20   provider registration
-src/screens/LoginScreen.tsx                     T15
-src/screens/SubscriptionScreen.tsx              T16
-src/screens/AccountScreen.tsx                   T17
-src/screens/AboutScreen.tsx                     T21
+src/firebase/auth/googleAuth.ts                 T18   Google Sign-In -> Firebase credential
+src/firebase/auth/SessionProvider.tsx           T18   auth state + gate orchestration
+src/firebase/subscriptions/api.ts               T19   callable wrappers + local cache
+src/firebase/analytics/appEvents.ts             T24   GA4 event wrappers
+src/firebase/analytics/watchSession.ts          T25   session recorder, batched
+src/firebase/analytics/contentIdentity.ts       T26   read-only content id mapping
+src/components/subscription/KeyInput.tsx        T22   formatted key entry
+src/screens/BlockedScreen.tsx                   T23   expired / revoked / offline states
+src/screens/LoginScreen.tsx                     T21
+src/screens/SubscriptionScreen.tsx              T22
+src/screens/AccountScreen.tsx                   T23
+src/screens/AboutScreen.tsx                     T28
 android/app/google-services.json                T10
 firestore.rules  firestore.indexes.json         T11
 firebase.json                                   T11
@@ -71,7 +72,7 @@ functions/src/validateAccess.ts                 T12
 functions/src/activateKey.ts                    T13b
 functions/src/manageKeys.ts                     T14b  generate / revoke / setAdminRole
 functions/src/rollups.ts                        T15b  trigger + scheduled finalizer
-functions/src/jellyfin.ts                       T16b  session token mint / revoke
+scripts/seed-emulator.mjs                       T17   emulator fixtures + dev keys
 __tests__/rules/*.test.ts                       T11-T12
 __tests__/functions/*.test.ts                   T12-T16b
 .github/workflows/ci.yml                        T22
@@ -81,7 +82,7 @@ __tests__/functions/*.test.ts                   T12-T16b
 
 **Deleted:** `.github/workflows/build-ios.yml`, `src/services/UpdateService.ts`, `src/components/UpdateChecker.tsx`.
 
-**Deferred to Phase 1B — do not start here:** `JellyfinProvider`, and deletion of `FlixQuestService.ts`, `WebViewScraper.tsx`, `StreamflixService.ts`, `VdrkSubtitleService.ts`, `usePlayerDebugSettings`.
+**Frozen by spec Amendment 2 — never modified, replaced, or deleted:** `FlixQuestService.ts`, `WebViewScraper.tsx`, `StreamflixService.ts`, `VdrkSubtitleService.ts`, `DaddyLiveService.ts`, `servers/list.json`, `playbackHeaders.ts`, and the stream-resolution plumbing in `PlayerScreen.tsx` / `DetailScreen.tsx`. There is no Phase 1B.
 
 ---
 
@@ -261,8 +262,8 @@ Change line 1 of both files to `package stream.z`. Leave every other line byte-i
   - `ActivateCode = 'ACTIVATED' | 'ALREADY_OWNED' | 'NOT_FOUND' | 'EXPIRED' | 'REVOKED' | 'ALREADY_BOUND' | 'CEILING' | 'UNAUTHENTICATED'`
   - `ActivateResult = { code: ActivateCode; expiresAt: number | null }`
   - `GateDecision = 'bootstrapping' | 'signedOut' | 'needsSubscription' | 'ready' | 'offlineCached' | 'needsServerContact' | 'blocked'`
-  - `JellyfinCredential = { baseUrl: string; username: string; sessionToken: string }`
-  - `ValidatedAccess = AccessResult & { jellyfin?: JellyfinCredential }` — `validateAccess` returns this, so the Jellyfin credential is an optional addition to the verdict rather than a second shape the client must branch on.
+  - `ContentIdentity = { contentId: string; contentTitle: string; contentType: 'movie' | 'episode' | 'other' }` — Task 26 produces it, Task 25 consumes it.
+  - No credential type is declared anywhere: spec Amendment 2 freezes the content backend, so `AccessResult` carries status and expiry only.
   - `UserDoc`, `SubscriptionKeyDoc`, `WatchSessionDoc`, `DeviceDoc`, `AppConfigDoc` — field-for-field from spec §8.
   - `fixtures/keyNormalization.json = { valid: [{ raw, normalized }], invalid: [{ raw, reason }] }`
 
@@ -785,7 +786,7 @@ it('is deterministic and never returns plaintext-shaped output', async () => {
 
 **Interfaces:**
 - Consumes: `config/app`, `users/{uid}`, `subscriptionKeys/{keyId}`, `devices/*`.
-- Produces: `ValidatedAccess` (Task 5). When authorized it carries `jellyfin: JellyfinCredential`, attached in Task 17 Step 3.
+- Produces: `AccessResult` (Task 5) — exactly its three fields, with no credential payload (spec Amendment 2).
 - Exported callable name: `validateAccess`.
 
 - [ ] **Step 1: Write the failing test matrix.**
@@ -822,7 +823,7 @@ it('returns suspended and disabled verbatim and never authorizes them', async ()
     seedUser({ uid: 'u1', status: st, subscriptionId: 'k1', installationId: 'i1' });
     const r = await callValidateAccess({ uid: 'u1', installationId: 'i1' });
     expect(r.status).toBe(st);
-    expect('jellyfin' in r).toBe(false);
+    expect(Object.keys(r).sort()).toEqual(['expiresAt', 'serverTimeMs', 'status']);
   }
 });
 it('rotates a new installation under the ceiling and audits it', async () => {
@@ -1044,25 +1045,23 @@ export const onWatchSessionWrite = FirestoreDocument.onWrite(async (event) => {
 - [ ] **Step 4: Test the sweeper** against the emulator: seed one stale open session, run the scheduled handler, assert the doc is finalized and that `userDailyStats` gained exactly the clamped duration. Assert a fresh open session is left alone.
 - [ ] **Step 5: Commit** `feat: rollup trigger and stale watch-session sweeper`.
 
-### Task 17: Jellyfin session tokens (server-side only)
+### Task 17: Emulator fixtures and a dev key batch
 
 **Files:**
-- Create: `functions/src/jellyfin.ts`
-- Test: `__tests__/functions/jellyfin.test.ts` (fetch mocked; no live server in Phase 1A)
+- Create: `scripts/seed-emulator.mjs`
+- Test: `__tests__/functions/fixtures.test.ts`
 
 **Interfaces:**
-- Produces: `jellyfinUsername(uid)` (deterministic, e.g. `streamz_` + first 8 of the uid), `ensureJellyfinUser(uid)`, `issueSessionToken(uid)` → `{ baseUrl, username, sessionToken }`, `revokeSessionToken(uid)`, `JF_BASE_URL` from Functions config. `issueSessionToken` calls `revokeSessionToken` first, which is what makes the login-time rotation in spec amendment A1 real rather than additive.
+- Consumes: `generateKeys`, `ensureConfig`, the Firestore emulator at `127.0.0.1:8080`.
+- Produces: `npm run seed:emulator`, which writes `config/app` defaults and three dev keys and prints their plaintext once.
 
-Phase 1A builds and unit-tests this module against a mocked `fetch` and does **not** wire it into playback — that is Phase 1B. Shipping it now keeps `validateAccess`'s return shape stable for the client tasks.
+This replaces the Jellyfin token module cancelled by spec Amendment 2. Tasks 22 and 30 cannot be verified without a key that really activates.
 
-- [ ] **Step 1: Write the failing tests** asserting the `X-Emby-Authorization` header shape, that the service password is read from a secret and never logged, that `issueSessionToken` returns `{ baseUrl, username, sessionToken }`, and that it throws `unavailable` on a non-2xx so `validateAccess` degrades to the transport-failure branch rather than handing the client a broken token.
-- [ ] **Step 2: Implement** with `fetch`, keeping every Jellyfin-specific endpoint string in one `const ENDPOINTS` object and a comment: `// Phase 1B pre-flight: confirm against the live server version before use (spec §13)`.
-- [ ] **Step 3: Wire it into `validateAccess`.** Replace Task 13's `return reconcileKey(keyRef, user, now);` with `const v = await reconcileKey(keyRef, user, now); return v.status === 'authorized' ? { ...v, jellyfin: await issueSessionToken(uid) } : v;` and add a `validateAccess` test asserting an authorized verdict carries `{ baseUrl, username, sessionToken }` and that a Jellyfin outage downgrades to the transport-failure branch instead of returning an unauthorized-but-empty credential. Nothing in Phase 1A *plays* media with this token — Task 26's sample provider handles playback, and Phase 1B consumes the credential. Producing it here keeps the client-facing shape of `validateAccess` frozen across the milestone boundary.
-- [ ] **Step 4: Commit** `feat: issue per-user jellyfin session tokens from validateAccess`.
-
----
-
-## Stage 5 — Client integration
+- [ ] **Step 1: Write `seed-emulator.mjs`** using the test-environment admin path from `@firebase/rules-unit-testing` — never a service-account file. Call `ensureConfig`, create three keys with `durationDays: 30`, store `status: 'UNUSED'` and `keyHash` only.
+- [ ] **Step 2: Write the failing test** asserting that seeding twice does not duplicate `config/app` or the keys, that no stored document field contains a plaintext key, and that the printed plaintext hashes match the stored `keyHash`.
+- [ ] **Step 3: Run → FAIL, implement, run → PASS.**
+- [ ] **Step 4: Add** `"seed:emulator": "node scripts/seed-emulator.mjs"` to root scripts.
+- [ ] **Step 5: Commit** `chore: emulator fixtures and dev key seeding for gate tests`.
 
 ### Task 18: Google Sign-In and session provider
 
@@ -1114,7 +1113,7 @@ Register `onAuthStateChanged`; call `refresh()` on mount, on `AppState === 'acti
 
 **Interfaces:**
 - Consumes: `functions().httpsCallable`, `getInstallationId`, `isTransportError`, `BRAND.applicationId`.
-- Produces: `validate(): Promise<AccessResult>`, `activate(rawKey: string): Promise<ActivateResult>`, `JellyfinCredential | null` on the authorized result.
+- Produces: `validate(): Promise<AccessResult>`, `activate(rawKey: string): Promise<ActivateResult>`.
 
 - [ ] **Step 1: Write the failing tests.** Assert that a transport error is *classified*, never swallowed: `validate()` must rethrow a tagged `TransportError` so `SessionProvider` can set `transportFailed`, while a `NOT_FOUND` key is a normal `ActivateResult` rather than an exception. Assert the plaintext key is sent to the callable but never written to AsyncStorage or logged.
 - [ ] **Step 2: Implement** with a 10-second timeout on `validate()` so a hung network cannot leave the app stuck on `bootstrapping` — without it, the splash never resolves and the failure looks like a crash. Attach `appVersion` and `installationId` to every call so the server, not the client, owns reconciliation.
@@ -1263,7 +1262,7 @@ it('uses one event name per playback transition', () => {
 - Test: `__tests__/analytics/watchSession.test.ts`
 
 **Interfaces:**
-- Consumes: `ContentProvider` item identity (Task 26), `getInstallationId`, `useSession().uid`, Firestore `watchSessions`.
+- Consumes: `contentIdentityFor` (Task 26), `getInstallationId`, `useSession().uid`, Firestore `watchSessions`.
 - Produces: `startSession(item, opts)`, `markPosition(positionMs, durationMs)`, `finishSession(reason)`, `flushOnBackground()`.
 
 - [ ] **Step 1: Write the failing tests** for the three rules the brief cares about — no per-second writes, correct ownership, clean finalize.
@@ -1296,31 +1295,29 @@ it('stamps the uid from the verified session, not from the caller', async () => 
 
 ## Stage 8 — Content seam, cleanup, branding
 
-### Task 26: `ContentProvider` interface and the sample provider
+### Task 26: Content identity for analytics, read-only
 
 **Files:**
-- Create: `src/services/content/types.ts`, `src/services/content/SampleContentProvider.ts`, `src/services/content/useContentProvider.ts`
-- Modify: `src/services/playbackHeaders.ts:6-21`, `src/screens/PlayerScreen.tsx:443-455,469-554`, `src/screens/DetailScreen.tsx:334-497`, `src/components/DownloadResolverHost.tsx:38-88`, `src/hooks/useServers.tsx:20,95-96,312-330,481-484`, `src/hooks/useSubtitles.ts:92-93`, `src/config/env.ts`
-- Test: `__tests__/content/sampleProvider.test.ts`
+- Create: `src/firebase/analytics/contentIdentity.ts`
+- Test: `__tests__/analytics/contentIdentity.test.ts`
+
+**This task must not touch the content backend.** Spec Amendment 2 freezes
+`FlixQuestService.ts`, `WebViewScraper.tsx`, `StreamflixService.ts`, `VdrkSubtitleService.ts`,
+`DaddyLiveService.ts`, `servers/list.json`, `playbackHeaders.ts`, and the resolver plumbing in
+`PlayerScreen.tsx` and `DetailScreen.tsx`. Do not delete, rewire, stub, make unreachable,
+replace, or debug any of them, and do not add a content provider, interface, source, or host.
+If this task appears to require any of that, stop and report rather than doing it.
 
 **Interfaces:**
-- Produces:
+- Consumes: the `MediaItem` / `Episode` values the player is **already** given by existing code
+  (`src/types/index.ts:27,80`; route params at `src/navigation/types.ts:12,29-41`).
+- Produces: `contentIdentityFor(item, season?, episode?) => { contentId: string; contentTitle: string; contentType: 'movie' | 'episode' | 'other' }`, consumed by Task 25 only.
 
-```ts
-export interface ContentProvider {
-  readonly id: 'sample' | 'jellyfin';
-  homeRows(): Promise<Row[]>;
-  search(term: string): Promise<MediaItem[]>;
-  resolveStream(item: MediaItem, season?: number, episode?: number): Promise<ResolvedStream>;
-  subtitles(item: MediaItem, source: MediaSource): Promise<SubtitleTrack[]>;
-}
-```
-- Consumes unchanged: `MediaItem`, `MovieDetails`, `Episode` from `src/types/index.ts` (**frozen** — decision 7), `ResolvedStream` from `DownloadService.ts:48-114`.
-
-- [ ] **Step 1: Write the failing test** asserting the provider contract and that `MediaItem` shape is not widened beyond an optional `providerId`: `resolveStream` returns `{ url, headers?, isHls }`; `homeRows` returns rows whose items all carry `providerId: 'sample'`.
-- [ ] **Step 2: Implement `SampleContentProvider`** over `EXPO_PUBLIC_SAMPLE_VIDEO_URL` (already at `env.ts:33-35` and currently unused), exposing two rows so Home is not empty, and returning the Sintel trailer for every `resolveStream`. Subtitles return `[]` — the existing subtitle UI must degrade to "no subtitles" rather than error, which is itself worth verifying.
-- [ ] **Step 3: Make the scraper unreachable.** Replace the `ServerResolver = 'webview'|'streamflix'|'flixquest'` discriminator and its guards with a single provider lookup, and delete the `useServers.tsx:95-96` remote fetch of `servers/list.json`. Route `PlayerScreen`'s resolver effect and `DownloadResolverHost` through the provider. Keep `FlixQuestService.ts`, `WebViewScraper.tsx`, `StreamflixService.ts` **files on disk but unreferenced** — deleting them is Phase 1B, once Jellyfin replaces them; deleting them here would leave Home with no source at all. Prove unreachability with `grep -rn "FlixQuest\|WebViewScraper\|StreamflixService" src/ | grep -v "^src/services/"` → zero hits.
-- [ ] **Step 4: Verify on device:** a title plays Sintel through `PlayerCore`, a download completes via the existing HLS path, and the Task 25 recorder produces a finalized session for it. Commit `feat: content provider seam with sample provider, scraper unreachable`.
+- [ ] **Step 1: Write the failing test** — a movie maps to its TMDB id and title; a show plus season and episode maps to `"<tmdbId>:s<season>e<episode>"`; an item with no id falls back to a title slug with `contentType: 'other'`; the function performs no network I/O.
+- [ ] **Step 2: Implement `contentIdentity.ts`** as a pure mapper over the existing types. Read-only: it inspects values it is handed, it never fetches or resolves anything.
+- [ ] **Step 3: Run `npx jest __tests__/analytics/contentIdentity` → PASS.**
+- [ ] **Step 4: Prove the backend is untouched** — `git diff --name-only HEAD~1..HEAD` must list only `src/firebase/analytics/contentIdentity.ts` and its test. If the range names anything under `src/services/`, `src/components/player/`, or `src/screens/PlayerScreen.tsx`, revert that file and redo the step.
+- [ ] **Step 5: Commit** `feat: read-only content identity mapping for watch analytics`.
 
 ### Task 27: Removals, feature flags, and brand assets
 
@@ -1376,8 +1373,8 @@ it('drops the false no-hosted-content disclaimer', () => {
 ```
 
 - [ ] **Step 2: Implement About** with `MenuRow` sections: app name and version, description, developer/organisation line, support email and Telegram from `BRAND`, Privacy Policy, Open source & licences (the folded Credits entries 1-6 from `CreditsScreen.tsx:23-65` **plus** the attribution from `:59-64`), and the sample-media credit from `LEGAL`.
-- [ ] **Step 3: Privacy copy** in `PrivacyPolicyContent.ts`, factual and sectioned: Google sign-in identity; subscription key state and binding; installation identifier and that it is not a hardware id; in-app activity through Firebase Analytics (name GA4); watch-session records and which fields; media served from a private Jellyfin server whose access token is held in device secure storage; that the app is not for sale and no payment data is collected. Mark it `// DRAFT — factual description, not legal advice; owner to review before distribution.` Do not claim nothing is collected, and do not invent jurisdictional terms.
-- [ ] **Step 4: Create `CHANGES.md`** at the repo root: the fork provenance line ("This project is based on Flickv4 by Wendale Franz Dy (https://github.com/sheeshcake/Flickv4), licensed GPL-3.0; modifications by Mir Majid, beginning 2026-10-03"), then a dated list of modification groups — package migration to stream.z, StreamZ rebrand, Firebase account/subscription/analytics layer, Jellyfin backend replacing the scraper sources, removed update-checker and debug surfaces, removed upstream iOS workflow containing a third-party credential. GPL requires stating changes with dates; a git log is not a substitute because a recipient of the APK is owed an intelligible record.
+- [ ] **Step 3: Privacy copy** in `PrivacyPolicyContent.ts`, factual and sectioned: Google sign-in identity; subscription key state and binding; installation identifier and that it is not a hardware id; in-app activity through Firebase Analytics (name GA4); watch-session records and which fields; content delivered through the pre-existing third-party integration inherited from Flickv4, which this fork neither authored nor operates; that the app is not for sale and no payment data is collected. Mark it `// DRAFT — factual description, not legal advice; owner to review before distribution.` Do not claim nothing is collected, and do not invent jurisdictional terms.
+- [ ] **Step 4: Create `CHANGES.md`** at the repo root: the fork provenance line ("This project is based on Flickv4 by Wendale Franz Dy (https://github.com/sheeshcake/Flickv4), licensed GPL-3.0; modifications by Mir Majid, beginning 2026-10-03"), then a dated list of modification groups — package migration to stream.z, StreamZ rebrand, Firebase account/subscription/analytics layer, content backend deliberately untouched per spec Amendment 2 (no source added, changed, removed, or reconfigured), removed update-checker and debug surfaces, removed upstream iOS workflow containing a third-party credential. GPL requires stating changes with dates; a git log is not a substitute because a recipient of the APK is owed an intelligible record.
 - [ ] **Step 5: Run → PASS. Commit** `feat: about screen with GPL attribution, privacy draft, sample credit, change record`.
 
 ### Task 29: CI that actually checks this
@@ -1416,8 +1413,8 @@ Google Sign-In is blocked until items 1-6 are done; nothing in Tasks 18-22 can b
 8. **Re-download `google-services.json`** after items 3-5 and place it at `android/app/google-services.json`. Confirm `package_name == "stream.z"`.
 9. **Restrict the mobile API key** in Google Cloud console → APIs and services → Credentials: Android apps, package `stream.z` plus the SHA-1s from item 4.
 10. **Provision your own TMDB v4 key.** The key committed in upstream `build-ios.yml:27-30` belongs to the original author and is already public in his history — do not use it and do not try to "rotate" it; it isn't yours. Task 27 deletes that workflow.
-11. **Jellyfin (for Phase 1B, not blocking 1A):** server installed and reachable, version recorded for the spec §13 pre-flight, and a dedicated low-privilege service account created for Functions.
-12. **Set Functions secrets** once `functions/` exists: `npx firebase-functions@latest` is not needed — use `npx -y firebase-tools@latest functions:secrets:set JELLYFIN_BASE_URL` and `...JELLYFIN_SERVICE_PASSWORD`. Never plain env, never committed.
+11. ~~Jellyfin server~~ **cancelled by spec Amendment 2** — no media server is provisioned, configured, or integrated in this project.
+12. **Functions secrets** — Phase 1A needs none. If a secret is ever required, set it with `npx -y firebase-tools@latest functions:secrets:set NAME`; never plain env, never committed.
 13. **Create your own fork and repoint `origin`** (fork URL pending from the owner; the clone still targets `sheeshcake/Flickv4`, so nothing is pushed until it is set). **The repository may stay private during development** — GPL-3.0 obligations attach at *distribution*, not before. The moment you hand out the APK you owe every recipient the corresponding source of your modified version, the unchanged `LICENSE`, and the attribution block. Plan for that as a release step, not a repo-visibility setting.
 14. **First key batch, decided 2026-10-03:** `generateKeys({ count: 10, durationDays: 30 })` — matching `config/app.keyDurationDays: 30`. The 10 plaintext keys are returned once and are never recoverable afterwards (decision 11), so store them in a password manager, not in the repo. Invoke this once Task 15 is in place so Task 22 can be tested end to end with a real key.
 

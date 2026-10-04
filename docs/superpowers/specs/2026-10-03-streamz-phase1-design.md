@@ -654,3 +654,54 @@ stated starting values and are tuned from observed data afterwards.
 Owner-side prerequisites in §23 block the start of Phase 1A feature work — chiefly the
 Blaze upgrade and the missing OAuth client, since Google Sign-In cannot function until
 both exist.
+
+---
+
+## 25. Amendment 2 — content backend returns to untouched scope (2026-10-03)
+
+Owner instruction supersedes decisions 1, 2, 7 and 8 in §2 and all of §13, §14 and Phase 1B.
+Where this section conflicts with anything above it, **this section wins.**
+
+**The content backend is an opaque existing dependency and is out of scope in both
+directions.** It is not replaced, not migrated, not extended, not repaired, not
+reconfigured, not deleted, and not "verified working." Specifically:
+`FlixQuestService.ts`, `WebViewScraper.tsx`, `StreamflixService.ts`,
+`VdrkSubtitleService.ts`, `DaddyLiveService.ts`, `servers/list.json`, the resolver
+discriminator in `playbackHeaders.ts`, the resolution call sites in `PlayerScreen.tsx`
+and `DetailScreen.tsx`, and `DownloadService`'s resolver plumbing are frozen. No task
+in this project may change them.
+
+**Superseded by this amendment:**
+
+| Earlier decision | Now void |
+|---|---|
+| §1/§2 decisions 1-2: Jellyfin backend, one shared server | Cancelled. No Jellyfin, no `JellyfinProvider`, no media-server credentials. |
+| §13 in full (Jellyfin integration, per-user accounts, session tokens, pre-flight probe) | Cancelled. Task 17 is repurposed. |
+| §14 `ContentProvider` interface + `SampleContentProvider` | Cancelled as a *playback* seam. Analytics read content identity from the item the player is already given; no new interface, no new provider. |
+| §16 / Task 27: delete scraper and subtitle clients | Cancelled. Those files stay exactly as they are. |
+| §21 Phase 1B DoD items 17-21 | Cancelled. Phase 1B no longer exists. |
+| §22 limitations 3 (artwork token in URL) | Void — no server credential exists. |
+| Appendix A item 11 (Jellyfin server + service account) and item 12's `JELLYFIN_*` secrets | Cancelled. |
+| §18 "media served from a private Jellyfin server" line in the privacy copy | Replaced with a factual statement that content comes from the pre-existing third-party integration inherited from Flickv4, which the owner did not author and does not operate. |
+
+**What survives unchanged:** everything about authentication, subscription keys,
+installation binding, the gate, offline grace, security rules, analytics, the
+`stream.z` package migration, the StreamZ rebrand, About/privacy/CHANGES, testing and
+CI. None of it depends on where video comes from.
+
+**Two consequences the owner should hold in mind, stated once and not repeated:**
+
+1. A public clone of Flickv4 has no resolver — `EXPO_PUBLIC_FLIXQUEST_API_URL` is empty
+   and the scraper lives in a private repository. Leaving the content path untouched
+   therefore leaves a real app that browses TMDB metadata and cannot play titles. That is
+   the inherited state, not damage introduced by this project, and this project will not
+   fix it.
+2. Charging for access keys to a client whose value is third-party streams you neither
+   license nor operate is the specific commercial exposure I flagged at design time. The
+   client architecture is mine to build; that decision and its consequences are the
+   owner's, and I will not work to make the acquisition path functional, diagnose it, or
+   improve its reliability.
+
+**Boundary for later phases:** any request to wire a scraper URL, add or swap a content
+host, fix stream extraction, or debug why playback yields no source is out of scope and
+will be declined, per the owner's own instruction in this amendment.
