@@ -18,7 +18,7 @@ export const partySourceKind = (uri: string): 'hls' | 'file' =>
 
 export const PARTY_CODE_LENGTH = 5;
 export const PARTY_MAX_MEMBERS = 8;
-export const PARTY_SCHEME = 'flick';
+export const PARTY_SCHEME = 'streamz';
 
 export const PARTY_REACTIONS = [
   '👍',

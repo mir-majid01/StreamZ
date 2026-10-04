@@ -42,8 +42,8 @@
         <action android:name="android.intent.action.VIEW"/>
         <category android:name="android.intent.category.DEFAULT"/>
         <category android:name="android.intent.category.BROWSABLE"/>
-        <data android:scheme="flick"/>
-        <data android:scheme="com.wfrdee.flick"/>
+        <data android:scheme="streamz"/>
+        <data android:scheme="stream.z"/>
       </intent-filter>
     </activity>
   </application>

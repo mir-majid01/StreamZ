@@ -1,4 +1,4 @@
-package com.flickv4
+package stream.z
 
 import android.app.Application
 import android.content.res.Configuration

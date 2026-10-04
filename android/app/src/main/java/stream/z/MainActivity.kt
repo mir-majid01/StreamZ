@@ -1,4 +1,4 @@
-package com.flickv4
+package stream.z
 
 import android.os.Build
 import android.os.Bundle

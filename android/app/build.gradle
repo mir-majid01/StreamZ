@@ -115,9 +115,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.flickv4'
+    namespace 'stream.z'
     defaultConfig {
-        applicationId 'com.flickv4'
+        applicationId 'stream.z'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         // From project `.env` (APP_VERSION / ANDROID_VERSION_CODE) — keep in

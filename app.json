@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Flick",
-    "slug": "flick",
+    "name": "StreamZ",
+    "slug": "streamz",
     "version": "0.0.0",
     "orientation": "default",
     "icon": "./assets/applogo/ic_launcher.png",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
-    "scheme": "flick",
+    "scheme": "streamz",
     "ios": {
       "supportsTablet": true,
       "icon": "./assets/applogo/ic_launcher.png",
@@ -39,7 +39,7 @@
         "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "predictiveBackGestureEnabled": true,
-      "package": "com.flickv4",
+      "package": "stream.z",
       "versionCode": 1
     },
     "web": {
