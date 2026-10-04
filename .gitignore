@@ -61,3 +61,6 @@ streamflix-main/*
 
 flixquest-scraper-main/*
 flixquest-main/*
+# JVM crash dumps from local gradle builds
+hs_err_pid*.log
+replay_pid*.log
