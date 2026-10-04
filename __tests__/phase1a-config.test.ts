@@ -1,0 +1,86 @@
+import { BRAND, LEGAL } from '@/src/config/brand';
+import { FEATURES } from '@/src/config/features';
+import { CONFIG_DEFAULTS, type AccessResult, type UserDoc } from '@/src/firebase/models';
+
+jest.mock('expo-secure-store', () => {
+  const store = new Map<string, string>();
+  return {
+    getItemAsync: jest.fn((k: string) => Promise.resolve(store.get(k) ?? null)),
+    setItemAsync: jest.fn((k: string, v: string) => {
+      store.set(k, v);
+      return Promise.resolve();
+    }),
+  };
+});
+jest.mock('expo-crypto', () => ({ randomUUID: jest.fn(() => 'AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE') }));
+
+import { getInstallationId, INSTALLATION_KEY } from '@/src/firebase/installation/installationId';
+import * as SecureStore from 'expo-secure-store';
+import { randomUUID } from 'expo-crypto';
+
+describe('brand config', () => {
+  it('is the single source for identity and support', () => {
+    expect(BRAND.name).toBe('StreamZ');
+    expect(BRAND.supportEmail).toBe('Mirmajid@proton.me');
+    expect(BRAND.supportTelegram).toBe('@Mirmajid01');
+    expect(BRAND.applicationId).toBe('stream.z');
+    expect(BRAND.accentHex).toBe('#E50914');
+    expect(BRAND.scheme).toBe('streamz');
+  });
+
+  it('keeps the GPL attribution obligations', () => {
+    expect(LEGAL.upstreamAuthor).toBe('Wendale Franz Dy');
+    expect(LEGAL.upstreamUrl).toBe('https://github.com/sheeshcake/Flickv4');
+    expect(LEGAL.attributionLine).toMatch(/Wendale Franz Dy/);
+    expect(LEGAL.attributionLine).toMatch(/GPL-3\.0/);
+    expect(LEGAL.sampleCredit).toMatch(/Blender Foundation/);
+  });
+
+  it('disables deferred surfaces in Phase 1A', () => {
+    expect(FEATURES).toEqual({ liveTv: false, watchParty: false, tvLayout: false, updateChecker: false });
+  });
+});
+
+describe('config defaults', () => {
+  it('matches the values frozen in the spec', () => {
+    expect(CONFIG_DEFAULTS).toEqual({
+      offlineGraceMinutes: 1440,
+      keyDurationDays: 30,
+      maxInstallationRotations30d: 3,
+      staleSessionMinutes: 10,
+      minAppVersion: '0.0.0',
+    });
+  });
+
+  it('models carry the spec field shapes', () => {
+    const doc: UserDoc = {
+      uid: 'u1', email: 'a@b.c', displayName: 'A', photoURL: null, status: 'active',
+      subscriptionId: null, installationId: null, activatedAt: null, expiresAt: null,
+      lastLoginAt: 1, lastActiveAt: 1, appVersion: '1.0.0', createdAt: 1,
+    };
+    const access: AccessResult = { status: 'authorized', expiresAt: 2, serverTimeMs: 1 };
+    expect(doc.status).toBe('active');
+    expect(access.serverTimeMs).toBe(1);
+  });
+});
+
+describe('installationId', () => {
+  beforeEach(() => jest.clearAllMocks());
+
+  it('generates once, lowercased, and reads back the same value', async () => {
+    const first = await getInstallationId();
+    expect(first).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(INSTALLATION_KEY, first);
+
+    (SecureStore.getItemAsync as jest.Mock).mockResolvedValueOnce(first);
+    (SecureStore.setItemAsync as jest.Mock).mockClear();
+    expect(await getInstallationId()).toBe(first);
+    expect(SecureStore.setItemAsync).not.toHaveBeenCalled();
+  });
+
+  it('replaces a corrupt stored value instead of propagating it', async () => {
+    (SecureStore.getItemAsync as jest.Mock).mockResolvedValueOnce('not-a-uuid');
+    (randomUUID as jest.Mock).mockReturnValueOnce('11111111-2222-3333-4444-555555555555');
+    expect(await getInstallationId()).toBe('11111111-2222-3333-4444-555555555555');
+  });
+});
