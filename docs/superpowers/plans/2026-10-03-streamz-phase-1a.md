@@ -32,6 +32,8 @@ Every task's requirements implicitly include this section.
 - **Expo has changed** (AGENTS.md). Before any Expo config-plugin, prebuild or native-project step, read the v57 docs at `https://docs.expo.dev/versions/v57.0.0/` and follow them over this plan if they differ.
 - Native Firebase needs a **development build**; Expo Go cannot run it.
 - Windows host, Git Bash. adb is not on PATH: `A=/c/Users/HP/AppData/Local/Android/Sdk/platform-tools/adb`. Test device is a physical Infinix X6876.
+- **JDK:** `java` and `keytool` are NOT on PATH, but `JAVA_HOME=C:\Program Files\Android\Android Studio\jbr` exists and is OpenJDK **21.0.8** (upstream CI uses Temurin 17; Gradle 9.3.1 accepts 21). Every build or keystore command must be preceded by `export PATH="/c/Program Files/Android/Android Studio/jbr/bin:$PATH"`. This, not a missing JDK, is what stalled the first baseline attempt.
+- **Debug keystore SHA-1** (needed in the Firebase console, from `android/app/debug.keystore`): `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`.
 - Before every commit: `npx tsc --noEmit` and `npm test` green, relative to the Task 1 baseline.
 - **Host limit: 3.9 GB RAM, 4 CPUs.** `android/gradle.properties:13` asks for `-Xmx2048m -XX:MaxMetaspaceSize=512m`, which has already crashed the JVM once (`android/hs_err_pid*.log`: "insufficient memory ... mmap failed to map 185597952 bytes"). Every Gradle invocation in this plan therefore uses `--no-daemon` and the reduced heap set by Task 1 (`-Xmx1024m -XX:MaxMetaspaceSize=384m`, `org.gradle.parallel=false`, `org.gradle.workers.max=2`). Never run a Gradle build and a Metro bundler or an `npm ci` at the same moment. If a build dies with a native OOM, retry once with `--no-daemon` after freeing memory — do not raise the heap.
 
@@ -226,6 +228,7 @@ export const FEATURES = {
 - Consumes: `BRAND.applicationId`, `BRAND.scheme`.
 - Produces: an APK with `applicationId == 'stream.z'`. Task 10 cannot start until this holds — the Google Services plugin validates `package_name` against `applicationId` and fails the build otherwise.
 
+- [ ] **Step 0: Control build (the check deferred from Task 1).** `export PATH="/c/Program Files/Android/Android Studio/jbr/bin:$PATH"`, then `cd android && ./gradlew assembleDebug --no-daemon`, install, and confirm the **untouched** app reaches Home. If this fails before a single edit, stop and report: that is a pre-existing host or upstream problem, and this task cannot tell its own breakage apart from it.
 - [ ] **Step 1: Map before editing.** `grep -rn "com\.flickv4" --include=*.kt --include=*.gradle --include=*.xml --include=*.json .` Expected: exactly `build.gradle:118`, `:120`, and the two `.kt` package lines. Any additional hit joins this task.
 - [ ] **Step 2: Move sources.**
 
