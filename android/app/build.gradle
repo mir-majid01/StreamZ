@@ -213,3 +213,7 @@ dependencies {
         implementation jscFlavor
     }
 }
+
+// StreamZ: Firebase project config lives in android/app/google-services.json.
+// The plugin validates its package_name against applicationId (stream.z).
+apply plugin: "com.google.gms.google-services"

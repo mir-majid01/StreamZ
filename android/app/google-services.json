@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "283831382421",
+    "project_id": "streamz-c98b9",
+    "storage_bucket": "streamz-c98b9.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:283831382421:android:79ad64373e0eb60215c69c",
+        "android_client_info": {
+          "package_name": "stream.z"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOANiv1lOVCvzqHuhHXYFGlyG0PBa_ZnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
