@@ -1,42 +1,43 @@
-import firebase from '@react-native-firebase/app';
-import auth from '@react-native-firebase/auth';
-import analytics from '@react-native-firebase/analytics';
-
-let prepared = false;
+import { getApp, getApps } from '@react-native-firebase/app';
+import { getAuth } from '@react-native-firebase/auth';
+import { getFunctions } from '@react-native-firebase/functions';
+import { getAnalytics, setConsent, setUserId } from '@react-native-firebase/analytics';
 
 /**
- * Native Firebase reads its project config from android/app/google-services.json, so
- * there is no key to ship here. Returns false when the native config is missing, which
- * the gate treats as a transport failure rather than an authorization result.
+ * React Native Firebase v26 is modular-only — there is no default export and no
+ * `firebase.app()` namespace. Everything here goes through the named modular getters.
  */
+
 export function ensureFirebase(): boolean {
-  if (prepared) return true;
-  if (!firebase.apps.length) return false;
-  firebase.functions().useFunctionsRegion('us-central1');
-  prepared = true;
-  return true;
+  return getApps().length > 0;
 }
 
 export const firebaseProjectId = (): string | null =>
-  firebase.apps.length ? firebase.app().options.projectId : null;
+  ensureFirebase() ? getApp().options.projectId ?? null : null;
 
-export const currentUserUid = (): string | null => auth().currentUser?.uid ?? null;
+export const currentUserUid = (): string | null =>
+  ensureFirebase() ? getAuth().currentUser?.uid ?? null : null;
 
-/** Spec amendment A4: no advertising identifier is ever collected. */
+/**
+ * Spec amendment A4: no advertising identifier. v26 exposes consent rather than the old
+ * `setAdvertisingIdCollectionEnabled`, so advertising storage is denied outright.
+ */
 export async function disableAdvertisingId(): Promise<void> {
   try {
-    await analytics().setAdvertisingIdCollectionEnabled(false);
+    await setConsent(getAnalytics(), { advertising: 'denied', analyticsStorage: 'granted' });
   } catch {
-    // Analytics may be unavailable in a dev build; never block sign-in on it.
+    // Analytics is unavailable in some dev builds; telemetry must never block sign-in.
   }
 }
 
 export async function setAnalyticsUser(uid: string | null): Promise<void> {
   try {
-    // GA4 measures app open and sessions automatically; the only thing worth adding here
-    // is the association between events and the signed-in uid (spec §15).
-    await analytics().setUserId(uid ?? '');
+    // GA4 measures app open and sessions automatically, so the only value worth adding is
+    // the link between events and the signed-in uid (spec §15).
+    await setUserId(getAnalytics(), uid ?? '');
   } catch {
-    // Telemetry is best-effort; a dropped call must never reach the user.
+    // Best effort.
   }
 }
+
+export const functions = () => getFunctions(getApp());

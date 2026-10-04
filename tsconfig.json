@@ -6,6 +6,12 @@
       "@/*": [
         "./*"
       ]
-    }
+    },
+    "types": [
+      "jest",
+      "node",
+      "react",
+      "react-test-renderer"
+    ]
   }
 }

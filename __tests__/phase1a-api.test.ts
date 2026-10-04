@@ -1,18 +1,21 @@
-jest.mock('@react-native-firebase/functions', () => {
-  const callable = jest.fn();
-  return { __esModule: true, default: () => ({ httpsCallable: callable }), __callable: callable };
-});
-jest.mock('@/src/firebase/init', () => ({ ensureFirebase: jest.fn(() => true) }));
+jest.mock('@react-native-firebase/functions', () => ({
+  getFunctions: jest.fn(() => ({})),
+  httpsCallable: jest.fn(),
+}));
+jest.mock('@/src/firebase/init', () => ({
+  ensureFirebase: jest.fn(() => true),
+  functions: jest.fn(() => ({})),
+}));
 jest.mock('@/src/firebase/installation/installationId', () => ({
   getInstallationId: jest.fn(async () => 'inst-1'),
 }));
 jest.mock('@/src/utils/appVersion', () => ({ getAppVersion: () => '1.0.0' }));
 
-import functions from '@react-native-firebase/functions';
+import { httpsCallable } from '@react-native-firebase/functions';
 import { ensureFirebase } from '@/src/firebase/init';
 import { validate, activate, TransportError } from '@/src/firebase/subscriptions/api';
 
-const callable = (functions() as never as { httpsCallable: jest.Mock }).httpsCallable;
+const callable = httpsCallable as unknown as jest.Mock;
 
 beforeEach(() => {
   callable.mockReset();
@@ -25,7 +28,7 @@ describe('validate', () => {
       data: { status: 'needsKey', expiresAt: null, serverTimeMs: 5 },
     }));
     const r = await validate();
-    expect(callable).toHaveBeenCalledWith('validateAccess');
+    expect(callable.mock.calls[0][1]).toBe('validateAccess');
     expect(r.status).toBe('needsKey');
   });
 

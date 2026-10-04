@@ -6,6 +6,9 @@ import {
 } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { SplashScreen } from '@/src/screens/SplashScreen';
+import { LoginScreen } from '@/src/screens/LoginScreen';
+import { SubscriptionScreen } from '@/src/screens/SubscriptionScreen';
+import { BlockedScreen } from '@/src/screens/BlockedScreen';
 import { DetailScreen } from '@/src/screens/DetailScreen';
 import { PlayerScreen } from '@/src/screens/PlayerScreen';
 import { LivePlayerScreen } from '@/src/screens/LivePlayerScreen';
@@ -80,6 +83,9 @@ export const AppNavigator = () => {
           component={SplashScreen}
           options={{ animation: 'fade' }}
         />
+        <Stack.Screen name="Login" component={LoginScreen} options={{ animation: 'fade' }} />
+        <Stack.Screen name="Subscription" component={SubscriptionScreen} options={{ animation: 'fade' }} />
+        <Stack.Screen name="Blocked" component={BlockedScreen} options={{ animation: 'fade' }} />
         <Stack.Screen
           name="Main"
           component={isTVLayout ? TVNavigator : TabNavigator}

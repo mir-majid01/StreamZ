@@ -1,9 +1,9 @@
-import functions from '@react-native-firebase/functions';
-import { ensureFirebase } from '@/src/firebase/init';
+import { httpsCallable } from '@react-native-firebase/functions';
+import { ensureFirebase, functions } from '@/src/firebase/init';
 import { getInstallationId } from '@/src/firebase/installation/installationId';
 import { normalizeKeyBody } from '@/src/firebase/subscriptions/keyFormat';
-import type { AccessResult, ActivateResult } from '@/src/firebase/models';
 import { getAppVersion } from '@/src/utils/appVersion';
+import type { AccessResult, ActivateResult } from '@/src/firebase/models';
 
 /** Thrown when the server could not be reached. The gate maps this onto offline grace. */
 export class TransportError extends Error {
@@ -14,9 +14,8 @@ export class TransportError extends Error {
   }
 }
 
-// A hung callable would otherwise leave the gate on `bootstrapping` and the user on a
-// blank splash. The code is deliberately `deadline-exceeded` so it classifies as
-// transport and grace can apply.
+// A hung callable would otherwise leave the gate on `bootstrapping` behind a blank
+// splash. The code is deliberately `deadline-exceeded` so it classifies as transport.
 const VALIDATE_TIMEOUT_MS = 10_000;
 const ACTIVATE_TIMEOUT_MS = 15_000;
 
@@ -36,15 +35,22 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-export async function validate(): Promise<AccessResult> {
+function requireFirebase(): void {
   if (!ensureFirebase()) throw new TransportError('firebase-unconfigured');
+}
+
+export async function validate(): Promise<AccessResult> {
+  requireFirebase();
   const installationId = await getInstallationId();
   try {
     const res = await withTimeout(
-      functions().httpsCallable('validateAccess')({ installationId, appVersion: getAppVersion() }),
+      httpsCallable<{ installationId: string; appVersion: string }, AccessResult>(
+        functions(),
+        'validateAccess',
+      )({ installationId, appVersion: getAppVersion() }),
       VALIDATE_TIMEOUT_MS,
     );
-    const data = res.data as AccessResult;
+    const data = res.data;
     if (!data || typeof data.status !== 'string' || typeof data.serverTimeMs !== 'number') {
       throw new TransportError('malformed-verdict');
     }
@@ -58,13 +64,17 @@ export async function validate(): Promise<AccessResult> {
 export async function activate(rawKey: string): Promise<ActivateResult> {
   const body = normalizeKeyBody(rawKey);
   if (!body) return { code: 'NOT_FOUND', expiresAt: null };
+  requireFirebase();
   const installationId = await getInstallationId();
   try {
     const res = await withTimeout(
-      functions().httpsCallable('activateKey')({ key: body, installationId }),
+      httpsCallable<{ key: string; installationId: string }, ActivateResult>(
+        functions(),
+        'activateKey',
+      )({ key: body, installationId }),
       ACTIVATE_TIMEOUT_MS,
     );
-    return res.data as ActivateResult;
+    return res.data;
   } catch (e) {
     if (isCallableTransportFailure(e)) throw new TransportError('transport');
     throw e;
@@ -72,6 +82,7 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
 }
 
 function isCallableTransportFailure(e: unknown): boolean {
+  if (e instanceof TransportError) return true;
   const code = (e as { code?: string })?.code ?? '';
   return /(^|\/)unavailable$|deadline-exceeded|internal|network-request-failed/.test(code);
 }

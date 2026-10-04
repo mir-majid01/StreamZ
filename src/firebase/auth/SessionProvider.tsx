@@ -1,10 +1,10 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import auth from '@react-native-firebase/auth';
+import { getAuth, onAuthStateChanged, type User } from '@react-native-firebase/auth';
 import { decideGate, routeFor, shouldRevalidate, type GateFacts } from '@/src/firebase/subscriptions/gate';
 import { validate, TransportError } from '@/src/firebase/subscriptions/api';
-import { disableAdvertisingId, setAnalyticsUser } from '@/src/firebase/init';
+import { disableAdvertisingId, ensureFirebase, setAnalyticsUser } from '@/src/firebase/init';
 import { CONFIG_DEFAULTS, graceMsFrom, type AccessResult } from '@/src/firebase/models';
 import type { GateDecision } from '@/src/firebase/models';
 
@@ -103,7 +103,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, [uid]);
 
   useEffect(() => {
-    const subscriber = auth().onAuthStateChanged((firebaseUser) => {
+    if (!ensureFirebase()) return;
+    const subscriber = onAuthStateChanged(getAuth(), (firebaseUser: User | null) => {
       const nextUid = firebaseUser?.uid ?? null;
       setUid(nextUid);
       setNowMs(Date.now());
@@ -119,7 +120,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       );
       void setAnalyticsUser(nextUid);
     });
-    return () => subscriber.remove();
+    return subscriber;
   }, []);
 
   useEffect(() => {

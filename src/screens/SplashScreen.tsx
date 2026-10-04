@@ -14,6 +14,7 @@ import loadingMessages from '@/src/constants/loadingMessages.json';
 import { useServers } from '@/src/hooks/useServers';
 import { useHomeData } from '@/src/hooks/useHomeData';
 import { useCatalogRegion } from '@/src/hooks/useCatalogRegion';
+import { useSession } from '@/src/firebase/auth/SessionProvider';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 import {
   updateService,
@@ -51,6 +52,9 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   const { refreshBuiltInServers } = useServers();
   const { prefetch } = useHomeData();
   const { loaded: regionLoaded } = useCatalogRegion();
+  const { route: gateRoute, decision: gateDecision } = useSession();
+  const gateRef = useRef({ route: gateRoute, decision: gateDecision });
+  gateRef.current = { route: gateRoute, decision: gateDecision };
 
   const [updaterOpen, setUpdaterOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
@@ -65,12 +69,19 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   const goMain = useCallback(() => {
     if (didNavigateRef.current) return;
     didNavigateRef.current = true;
-    navigation.replace('Main');
+    const target = gateRef.current.route;
+    if (target === 'Main') {
+      // Home data is only fetched once the gate has actually let the user in.
+      void Promise.resolve(bootFnsRef.current.prefetch()).catch(() => undefined);
+    }
+    navigation.replace(target);
   }, [navigation]);
 
   const maybeExit = useCallback(() => {
     if (didStartExitRef.current) return;
     if (!drawDoneRef.current || !bootDoneRef.current) return;
+    // Gate totality: never leave Splash before auth and subscription are resolved.
+    if (gateRef.current.decision === 'bootstrapping') return;
     didStartExitRef.current = true;
     landTimerRef.current = setTimeout(goMain, LAND_MS);
   }, [goMain]);
@@ -125,17 +136,16 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   }, [showCopy]);
 
   useEffect(() => {
+    maybeExitRef.current();
+  }, [gateDecision]);
+
+  useEffect(() => {
     if (!regionLoaded) return;
 
     let cancelled = false;
     void (async () => {
-      const { refreshBuiltInServers: refreshServers, prefetch: prefetchHome } =
-        bootFnsRef.current;
-      const [, info] = await Promise.all([
-        refreshServers(),
-        checkUpdatesSafe(),
-        prefetchHome(),
-      ]);
+      const { refreshBuiltInServers: refreshServers } = bootFnsRef.current;
+      const [, info] = await Promise.all([refreshServers(), checkUpdatesSafe()]);
       if (cancelled) return;
 
       if (info?.hasUpdate) {

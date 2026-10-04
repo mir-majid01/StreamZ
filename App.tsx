@@ -5,6 +5,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { GluestackUIProvider } from '@/components/ui/gluestack-ui-provider';
 import { AppNavigator } from '@/src/navigation/AppNavigator';
+import { SessionProvider } from '@/src/firebase/auth/SessionProvider';
 import { SubtitleSettingsProvider } from '@/src/hooks/useSubtitleSettings';
 import { ContinueWatchingProvider } from '@/src/hooks/useContinueWatching';
 import { FinishedMoviesProvider } from '@/src/hooks/useFinishedMovies';
@@ -38,7 +39,8 @@ export default function App() {
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SafeAreaProvider>
         <GluestackUIProvider mode="dark">
-          <ServersProvider>
+          <SessionProvider>
+            <ServersProvider>
             <MyListProvider>
               <CatalogRegionProvider>
                 <HomeDataProvider>
@@ -67,7 +69,8 @@ export default function App() {
                 </HomeDataProvider>
               </CatalogRegionProvider>
             </MyListProvider>
-          </ServersProvider>
+            </ServersProvider>
+          </SessionProvider>
         </GluestackUIProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>

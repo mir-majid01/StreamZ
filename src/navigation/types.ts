@@ -8,6 +8,9 @@ import type { MediaItem } from '@/src/types';
 
 export type RootStackParamList = {
   Splash: undefined;
+  Login: undefined;
+  Subscription: undefined;
+  Blocked: undefined;
   Main: undefined;
   Detail: { item: MediaItem };
   ViewMore: { title: string; query: CategoryQuery };
