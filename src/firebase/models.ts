@@ -13,7 +13,13 @@ export type AccessStatus =
   | 'revoked'
   | 'suspended'
   | 'disabled'
-  | 'installationCeiling';
+  | 'installationCeiling'
+  /**
+   * The callable answered, but not with a verdict we can act on (rejected claim, bad
+   * response, server bug). Blocked, and never eligible for offline grace — fabricating a
+   * plausible status here would let an unknown error read as "revoked" to the user.
+   */
+  | 'error';
 
 export type ActivateCode =
   | 'ACTIVATED'
