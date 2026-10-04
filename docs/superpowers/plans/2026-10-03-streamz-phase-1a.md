@@ -32,6 +32,7 @@ Every task's requirements implicitly include this section.
 - Native Firebase needs a **development build**; Expo Go cannot run it.
 - Windows host, Git Bash. adb is not on PATH: `A=/c/Users/HP/AppData/Local/Android/Sdk/platform-tools/adb`. Test device is a physical Infinix X6876.
 - Before every commit: `npx tsc --noEmit` and `npm test` green, relative to the Task 1 baseline.
+- **Host limit: 3.9 GB RAM, 4 CPUs.** `android/gradle.properties:13` asks for `-Xmx2048m -XX:MaxMetaspaceSize=512m`, which has already crashed the JVM once (`android/hs_err_pid*.log`: "insufficient memory ... mmap failed to map 185597952 bytes"). Every Gradle invocation in this plan therefore uses `--no-daemon` and the reduced heap set by Task 1 (`-Xmx1024m -XX:MaxMetaspaceSize=384m`, `org.gradle.parallel=false`, `org.gradle.workers.max=2`). Never run a Gradle build and a Metro bundler or an `npm ci` at the same moment. If a build dies with a native OOM, retry once with `--no-daemon` after freeing memory — do not raise the heap.
 
 ---
 
