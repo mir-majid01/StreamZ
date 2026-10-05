@@ -70,10 +70,6 @@ service cloud.firestore {
     // lets a subscriber reach exactly one key without being able to list the collection:
     // rules cannot see a query's filters, so `list` on subscriptionKeys would hand every
     // signed-in device the entire keyspace.
-    function keyDoc(id) {
-      return get(/databases/$(database)/documents/subscriptionKeys/$(id)).data;
-    }
-
     function keyDocAfter(id) {
       return getAfter(/databases/$(database)/documents/subscriptionKeys/$(id)).data;
     }
