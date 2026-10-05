@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// Deny by default. Anything not granted here is refused. The mobile client may read and
+// append about itself and nothing else; every privileged mutation happens in Cloud
+// Functions, which bypasses these rules via the Admin SDK.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // Written only by Functions. The client may heartbeat presence and nothing else, so
+    // status, expiresAt, subscriptionId, installationId and any role field are refused.
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow update: if isOwner(uid)
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt']);
+      allow create, delete: if false;
+    }
+
+    // Plaintext-shaped lookup table. Never readable or writable from a device.
+    match /subscriptionKeys/{keyId} {
+      allow read, write: if false;
+    }
+
+    match /userDailyStats/{id} {
+      allow read, write: if false;
+    }
+
+    match /contentStats/{id} {
+      allow read, write: if false;
+    }
+
+    match /adminAudit/{id} {
+      allow read, write: if false;
+    }
+
+    match /config/app {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
+    // Rotation history is server bookkeeping; owners may look, never edit.
+    match /devices/{id} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Sessions are append-and-finalize. A document becomes immutable the moment it is
+    // finalized, because updates are only permitted while the stored state is 'open'.
+    match /watchSessions/{id} {
+      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+
+      allow create: if signedIn()
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.state == 'open'
+        && request.resource.data.sessionId == id
+        && request.resource.data.keys().hasAll([
+          'sessionId', 'uid', 'state', 'startedAt', 'contentId', 'durationMs', 'watchDurationMs'
+        ]);
+
+      allow update: if signedIn()
+        && resource.data.uid == request.auth.uid
+        && resource.data.state == 'open'
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.sessionId == resource.data.sessionId
+        && request.resource.data.startedAt == resource.data.startedAt
+        && request.resource.data.state in ['open', 'finalized']
+        && request.resource.data.watchDurationMs >= resource.data.watchDurationMs
+        && request.resource.data.watchDurationMs <= request.resource.data.durationMs;
+
+      allow delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

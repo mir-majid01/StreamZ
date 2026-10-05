@@ -64,3 +64,7 @@ flixquest-main/*
 # JVM crash dumps from local gradle builds
 hs_err_pid*.log
 replay_pid*.log
+
+# Cloud Functions build output and local deps
+functions/node_modules/
+functions/lib/
