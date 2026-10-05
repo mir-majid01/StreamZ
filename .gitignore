@@ -68,3 +68,6 @@ replay_pid*.log
 # Cloud Functions build output and local deps
 functions/node_modules/
 functions/lib/
+
+# SDD scratch (ledger is local recovery state, not project history)
+.superpowers/*.log
