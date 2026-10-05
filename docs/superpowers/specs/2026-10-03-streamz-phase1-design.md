@@ -705,3 +705,65 @@ CI. None of it depends on where video comes from.
 **Boundary for later phases:** any request to wire a scraper URL, add or swap a content
 host, fix stream extraction, or debug why playback yields no source is out of scope and
 will be declined, per the owner's own instruction in this amendment.
+
+---
+
+## 26. Amendment 3 — no Cloud Functions: security rules become the backend (2026-10-05)
+
+**Trigger.** The project stays on the **Spark** (free) plan. Cloud Functions cannot be
+deployed there, so decision 3 ("the trusted authority is a Cloud Function") is no longer
+implementable, and §10 in full is superseded. The owner also brought a second client into
+scope: **StreamZ Admin** (`stream.z.admin`, native Kotlin/Compose, `C:\Users\HP\Desktop\admin-z-app`),
+built against the same project and already written for direct-Firestore Spark mode.
+
+**What replaces it.** Enforcement moves from server code into `firestore.rules`, which is now
+the product's actual backend rather than a defence in depth. Two documents changed shape to
+make that possible:
+
+1. **`subscriptionKeys/{keyHash}`** — the document id *is* the SHA-256 of the canonical
+   plaintext. A subscriber may `get` exactly one key by id and may never `list` the
+   collection. This is not cosmetic: rules cannot inspect a query's filters, so any client
+   allowed to list `subscriptionKeys` can dump every key, its hash, its status and who it is
+   bound to. Hash-addressing turns "guess a key" into "already know the key".
+2. **Key grammar is the admin's, not the client's** — four groups of five from
+   `ABCDEFGHJKMNPQRSTUVWXYZ23456789`, and the hash preimage is that dashed string verbatim,
+   with no `streamz:v1:` salt and no display prefix. The earlier 12-character Crockford
+   design and the admin's 20-character format could never have agreed on a digest, so a key
+   minted by one app would have been invisible to the other. `KeyGenerator.isCanonical()` and
+   `fixtures/keyNormalization.json` now pin the contract on both sides.
+
+**Authority for each decision, after the move.**
+
+| Decision | Was | Is |
+|---|---|---|
+| Mint keys | `generateKeys` callable | Staff write, gated on the `role` custom claim; rules force `id == keyHash`, `status == UNUSED`, 1..3650 days |
+| Bind a key | `activateKey` callable, `runTransaction` | Client `runTransaction` + rules: only `UNUSED → ACTIVE`, only to `request.auth.uid`, `expiresAt == activatedAt + durationDays`, and `activatedAt` pinned to `request.time.toMillis()` (±5 min) |
+| Grant access | `validateAccess` callable | Read `users/{uid}` **and** the bound key; a key that is `REVOKED`/`EXPIRED` wins over a user document that still says active |
+| Installation ceiling | Counter maintained in a transaction | Monotonic `users/{uid}.installationRotations`, +1 only when `installationId` changes, `<= config/app.maxInstallationRotations` — all checked in rules |
+| Expiry sweep, stale sessions, rollups | Scheduled / `onDocumentWritten` functions | Nobody. See the consequences below |
+| Roles | `setAdminRole` callable with the Admin SDK | Set by hand in the Firebase console. Clients cannot write claims, which is the only reason a phone holding one can be trusted |
+
+**Consequences accepted.**
+- **No scheduled anything.** An `EXPIRED` state is never written by a timer; expiry is computed
+  from `expiresAt` at read time, which is why the user app reads the key document too. A
+  `watchSessions` document left `open` by a crash is not auto-finalized; the recorder must
+  finalize on its own, and the admin treats `open` as unfinished.
+- **`contentStats` has no writer.** It stays read-only for both clients, so the admin's Top
+  Content is empty until either Blaze arrives or its dashboard aggregates raw sessions.
+  `userDailyStats` *is* client-writable for the caller's own uid, bounded by rules.
+- **`functions/` is not deployed.** It is kept as the Blaze upgrade path and its format is
+  aligned to the canonical grammar so it cannot mint a second, incompatible schema if it is
+  ever revived. Its callables are not wired to any client.
+- **A modified client remains out of threat model.** These rules stop a *protocol-violating*
+  device, not a *repackaged APK*. `getInstallationId`, `Date.now()` and the gate reducer all
+  live on the user's phone. That was already true of the inherited content path; the honest
+  framing is entitlement management, not access control.
+
+**What the user app must no longer do.** Nothing may import `@react-native-firebase/functions`
+(removed from `init.ts`), and no screen may present a raw Firebase error — with rules as the
+authority, `permission-denied` is a *verdict* and must never be laundered into a retry prompt
+or, worse, into offline grace.
+
+**Verification added by this amendment.** `__tests__/rules/firestore.rules.test.ts` grew from
+16 to 43 assertions and now runs the activation transaction itself, plus staff minting,
+hash-as-id, the rotation ceiling, revocation reaching a bound key, and the audit actor check.

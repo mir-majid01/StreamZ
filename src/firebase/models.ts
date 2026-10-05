@@ -6,6 +6,12 @@ export type UserStatus = 'active' | 'suspended' | 'disabled';
 export type KeyStatus = 'UNUSED' | 'ACTIVE' | 'EXPIRED' | 'REVOKED';
 export type SessionState = 'open' | 'finalized';
 
+/**
+ * Stored lowercase; StreamZ Admin upper-cases before matching its ContentType enum, so
+ * any value outside this trio is silently dropped from the admin's analytics lists.
+ */
+export type ContentType = 'movie' | 'series' | 'episode';
+
 export type AccessStatus =
   | 'authorized'
   | 'needsKey'
@@ -65,20 +71,29 @@ export interface UserDoc {
   lastActiveAt: number;
   appVersion: string;
   createdAt: number;
+  /**
+   * Lifetime count of installation rebindings. Without Cloud Functions the ceiling has to
+   * be enforced somewhere a client cannot lie, so it lives here as a monotonic counter the
+   * rules refuse to let go backwards or exceed config/app.maxInstallationRotations.
+   */
+  installationRotations: number;
 }
 
 export interface SubscriptionKeyDoc {
-  keyId: string;
+  /** The SHA-256 of the canonical plaintext, which is also this document's id. */
   keyHash: string;
   status: KeyStatus;
   durationDays: number;
   createdAt: number;
   createdBy: string;
+  batchId?: string | null;
+  batchLabel?: string | null;
   activatedAt: number | null;
   expiresAt: number | null;
   uid: string | null;
   installationId: string | null;
-  lastValidatedAt: number | null;
+  /** Written by the user app on each successful check; admin-owned fields stay untouched. */
+  lastValidatedAt?: number | null;
 }
 
 export interface WatchSessionDoc {
@@ -87,7 +102,7 @@ export interface WatchSessionDoc {
   state: SessionState;
   contentId: string;
   contentTitle: string;
-  contentType: 'movie' | 'episode' | 'clip' | 'live' | 'other';
+  contentType: ContentType;
   providerId?: string | null;
   tmdbId?: string | null;
   season?: number | null;
@@ -104,19 +119,24 @@ export interface WatchSessionDoc {
   updatedAt: number;
 }
 
+/**
+ * `devices/{uid__installationId}` — field names are the admin app's, because that is the
+ * client that renders them (device model, activation date, rotation marker).
+ */
 export interface DeviceDoc {
   uid: string;
   installationId: string;
-  firstSeenAt: number;
-  lastSeenAt: number;
-  rotations: number;
-  revokedAt: number | null;
+  deviceModel: string;
+  appVersion: string;
+  activatedAt: number;
+  /** Set when a newer installation replaced this one; null means current. */
+  rotatedAt: number | null;
 }
 
 export interface AppConfigDoc {
   offlineGraceMinutes: number;
   keyDurationDays: number;
-  maxInstallationRotations30d: number;
+  maxInstallationRotations: number;
   staleSessionMinutes: number;
   minAppVersion: string;
 }
@@ -124,7 +144,7 @@ export interface AppConfigDoc {
 export const CONFIG_DEFAULTS: AppConfigDoc = {
   offlineGraceMinutes: 1440,
   keyDurationDays: 30,
-  maxInstallationRotations30d: 3,
+  maxInstallationRotations: 5,
   staleSessionMinutes: 10,
   minAppVersion: '0.0.0',
 };
@@ -134,6 +154,8 @@ export const CONFIG_DEFAULTS: AppConfigDoc = {
  * milliseconds. Doing this conversion anywhere else is how a 1440-minute grace
  * silently becomes 1440 ms and every offline user is locked out.
  */
+export const DAY_MS = 86_400_000;
+
 export const graceMsFrom = (config: AppConfigDoc): number => config.offlineGraceMinutes * 60_000;
 export const staleMsFrom = (config: AppConfigDoc): number => config.staleSessionMinutes * 60_000;
 
@@ -141,5 +163,5 @@ export const staleMsFrom = (config: AppConfigDoc): number => config.staleSession
 export interface ContentIdentity {
   contentId: string;
   contentTitle: string;
-  contentType: 'movie' | 'episode' | 'clip' | 'live' | 'other';
+  contentType: ContentType;
 }

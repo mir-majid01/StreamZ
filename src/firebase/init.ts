@@ -1,6 +1,5 @@
 import { getApp, getApps } from '@react-native-firebase/app';
 import { getAuth } from '@react-native-firebase/auth';
-import { getFunctions } from '@react-native-firebase/functions';
 import { getAnalytics, setConsent, setUserId } from '@react-native-firebase/analytics';
 
 /**
@@ -39,5 +38,3 @@ export async function setAnalyticsUser(uid: string | null): Promise<void> {
     // Best effort.
   }
 }
-
-export const functions = () => getFunctions(getApp());

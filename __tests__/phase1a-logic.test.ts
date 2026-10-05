@@ -27,7 +27,7 @@ describe('keyFormat', () => {
     expect(normalizeKeyBody(raw)).toBe(normalized);
     expect(looksPlausible(raw)).toBe(true);
     expect(formatKeyForDisplay(raw)).toBe(
-      `FLK-${normalized.slice(0, 4)}-${normalized.slice(4, 8)}-${normalized.slice(8, 12)}`,
+      [0, 5, 10, 15].map((start) => normalized.slice(start, start + 5)).join('-'),
     );
   });
 
@@ -44,10 +44,11 @@ describe('keyFormat', () => {
   });
 
   it('groups typed input without destroying the value', () => {
-    expect(formatKeyInput('7h3k')).toBe('FLK-7H3K');
-    expect(formatKeyInput('flk-7h3k-92pq-x8km')).toBe('FLK-7H3K-92PQ-X8KM');
-    expect(formatKeyInput('7H3K92PQX8KMZZZZ')).toBe('FLK-7H3K-92PQ-X8KM');
-    expect(normalizeKeyBody(formatKeyInput('7h3k92pqx8km'))).toBe('7H3K92PQX8KM');
+    expect(formatKeyInput('8jkm')).toBe('8JKM');
+    expect(formatKeyInput('8jkm2npqrs4t6vw7xyza')).toBe('8JKM2-NPQRS-4T6VW-7XYZA');
+    expect(formatKeyInput('SZ-8JKM2-NPQRS-4T6VW-7XYZA')).toBe('8JKM2-NPQRS-4T6VW-7XYZA');
+    expect(formatKeyInput('FLK-8JKM2-NPQRS-4T6VW-7XYZA')).toBe('8JKM2-NPQRS-4T6VW-7XYZA');
+    expect(normalizeKeyBody(formatKeyInput('8jkm 2npqr s4t6v w7xy za'))).toBe('8JKM2NPQRS4T6VW7XYZA');
   });
 });
 
@@ -179,13 +180,14 @@ describe('units and round-trip (review findings 8, 15, 16)', () => {
   });
 
   it('documents the truncation contract for over-long input', () => {
-    // 18 chars cleaned, one FLK prefix consumed, the remaining 15 capped to 12 body chars.
-    expect(formatKeyInput('FLKFLK7H3K92PQX8KM')).toBe('FLK-FLK7-H3K9-2PQX');
+    // 18 chars cleaned, one FLK prefix consumed, the remaining 15 shown as-is and never
+    // accepted: a bare body is exactly 20 characters.
+    expect(formatKeyInput('FLKFLK7H3K92PQX8KM')).toBe('FLK7H-3K92P-QX8KM');
     expect(looksPlausible(formatKeyInput('FLKFLK7H3K92PQX8KM'))).toBe(false);
   });
 
   it('rejects a prefixed body containing a character outside the alphabet', () => {
-    for (const raw of ['FLK-7H3K-92PQ-X8LI', 'FLK-7H3K-92PQ-X8KI', 'FLK-7H3K-92PQ-X8O0', 'FLK-7H3K-92PQ-X8U0']) {
+    for (const raw of ['FLK-8JKM2-NPQRS-4T6VW-7XYLI', 'SZ-0JKM2-NPQRS-4T6VW-7XYZA', '8JKM2-NPQRS-4T6VW-7XYZ1']) {
       expect(normalizeKeyBody(raw)).toBeNull();
     }
   });

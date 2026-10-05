@@ -4,6 +4,9 @@
 module.exports = {
   rootDir: __dirname,
   testEnvironment: 'node',
+  // Connecting to the emulator and compiling the rules is slow on a small machine; the
+  // 5 s default fails the beforeAll hook before a single assertion has run.
+  testTimeout: 30000,
   testMatch: [
     '<rootDir>/__tests__/rules/**/*.test.ts',
     '<rootDir>/__tests__/functions/**/*.test.ts',

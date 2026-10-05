@@ -46,7 +46,7 @@ describe('config defaults', () => {
     expect(CONFIG_DEFAULTS).toEqual({
       offlineGraceMinutes: 1440,
       keyDurationDays: 30,
-      maxInstallationRotations30d: 3,
+      maxInstallationRotations: 5,
       staleSessionMinutes: 10,
       minAppVersion: '0.0.0',
     });
@@ -57,6 +57,7 @@ describe('config defaults', () => {
       uid: 'u1', email: 'a@b.c', displayName: 'A', photoURL: null, status: 'active',
       subscriptionId: null, installationId: null, activatedAt: null, expiresAt: null,
       lastLoginAt: 1, lastActiveAt: 1, appVersion: '1.0.0', createdAt: 1,
+      installationRotations: 0,
     };
     const access: AccessResult = { status: 'authorized', expiresAt: 2, serverTimeMs: 1 };
     expect(doc.status).toBe('active');

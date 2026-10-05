@@ -1,73 +1,283 @@
 rules_version = '2';
 
-// Deny by default. Anything not granted here is refused. The mobile client may read and
-// append about itself and nothing else; every privileged mutation happens in Cloud
-// Functions, which bypasses these rules via the Admin SDK.
+// StreamZ — the single security authority for BOTH clients on project streamz-c98b9.
+//
+// There is no Cloud Functions tier (Spark plan), so nothing runs on a server between the
+// subscriber and the database. Everything the old `activateKey` / `validateAccess`
+// callables decided in code is decided here instead, which makes this file the product's
+// actual backend. It is deployed from the StreamZ repository; StreamZ Admin keeps no rules
+// of its own — its writes have to satisfy these conditions or they are refused.
+//
+// Two audiences, one database:
+//   subscriber  — signed in with no `role` claim. Sees only its own documents, plus the
+//                 one key document it can address by hash.
+//   staff       — signed in carrying a `role` custom claim (admin | manager | support) set
+//                 by hand in the Firebase console. Custom claims are not writable from any
+//                 client, which is the only reason a phone can be trusted to mint keys.
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // ------------------------------------------------------------------ vocabulary
+
     function signedIn() {
       return request.auth != null;
+    }
+
+    function tokenRole() {
+      return signedIn() && 'role' in request.auth.token ? request.auth.token.role : '';
+    }
+
+    function isAdmin() {
+      return tokenRole() == 'admin';
+    }
+
+    // admin and manager may mutate entitlements; support may only read and reset bindings.
+    function isKeyStaff() {
+      return tokenRole() in ['admin', 'manager'];
+    }
+
+    function isStaff() {
+      return tokenRole() in ['admin', 'manager', 'support'];
     }
 
     function isOwner(uid) {
       return signedIn() && request.auth.uid == uid;
     }
 
-    // Written only by Functions. The client may heartbeat presence and nothing else, so
-    // status, expiresAt, subscriptionId, installationId and any role field are refused.
+    function config() {
+      return get(/databases/$(database)/documents/config/app).data;
+    }
+
+    // Absent config means the owner has not run setup, which is a refusal rather than an
+    // open ceiling.
+    function rotationCeiling() {
+      return exists(/databases/$(database)/documents/config/app)
+        ? config().maxInstallationRotations
+        : 0;
+    }
+
+    function isHash(id) {
+      return id.matches('^[0-9a-f]{64}$');
+    }
+
+    // Documents minted before the rotation counter existed read as zero rather than
+    // erroring out, which would silently freeze every activation on legacy accounts.
+    function rotationsOf(data) {
+      return 'installationRotations' in data ? data.installationRotations : 0;
+    }
+
+    // The document id of a key IS the SHA-256 of its plaintext. Addressing by id is what
+    // lets a subscriber reach exactly one key without being able to list the collection:
+    // rules cannot see a query's filters, so `list` on subscriptionKeys would hand every
+    // signed-in device the entire keyspace.
+    function keyDoc(id) {
+      return get(/databases/$(database)/documents/subscriptionKeys/$(id)).data;
+    }
+
+    function keyDocAfter(id) {
+      return getAfter(/databases/$(database)/documents/subscriptionKeys/$(id)).data;
+    }
+
+    function keyExists(id) {
+      return existsAfter(/databases/$(database)/documents/subscriptionKeys/$(id));
+    }
+
+    // A subscription is only real if the key it points at is ACTIVE and bound to this uid.
+    // Checked against getAfter so an activation transaction, which writes both documents,
+    // can be validated as a unit.
+    function boundToMe(id) {
+      return keyExists(id)
+        && keyDocAfter(id).uid == request.auth.uid
+        && keyDocAfter(id).status == 'ACTIVE';
+    }
+
+    // ------------------------------------------------------------------ users/{uid}
+
     match /users/{uid} {
-      allow read: if isOwner(uid);
-      allow update: if isOwner(uid)
-        && request.resource.data.uid == resource.data.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt']);
-      allow create, delete: if false;
+      allow get: if isOwner(uid) || isStaff();
+      // Subscribers never list this collection; staff page through it in the admin app.
+      allow list: if isStaff();
+
+      // First activation creates the document. Identity fields come from the token so a
+      // device cannot mint an account under somebody else's address.
+      allow create: if isOwner(uid)
+        && request.resource.data.uid == uid
+        && request.resource.data.email == (signedIn() && 'email' in request.auth.token
+              ? request.auth.token.email
+              : '')
+        && request.resource.data.status == 'active'
+        && request.resource.data.installationRotations == 0
+        && request.resource.data.createdAt == request.resource.data.lastLoginAt
+        && request.resource.data.createdAt == request.resource.data.lastActiveAt
+        && request.resource.data.expiresAt > request.resource.data.activatedAt
+        && request.resource.data.activatedAt >= request.resource.data.createdAt - 300000
+        && boundToMe(request.resource.data.subscriptionId)
+        && request.resource.data.keys().hasAll([
+          'uid', 'email', 'status', 'subscriptionId', 'installationId', 'activatedAt',
+          'expiresAt', 'lastLoginAt', 'lastActiveAt', 'appVersion', 'installationRotations',
+          'createdAt'
+        ]);
+
+      allow update: if (
+        // Presence heartbeat — the one write that needs no entitlement behind it.
+        isOwner(uid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastActiveAt'])
+      ) || (
+        // An activation. `role` is absent from the list on purpose: a client that could
+        // write it could promote itself, and these rules are the only thing standing
+        // between a phone and the admin console.
+        isOwner(uid)
+        && resource.data.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'subscriptionId', 'installationId', 'activatedAt', 'expiresAt',
+          'lastLoginAt', 'lastActiveAt', 'appVersion', 'installationRotations'
+        ])
+        // The counter only ever steps by one, and only when the installation changed, so a
+        // device cannot quietly reset its way back to a fresh rotation budget.
+        && rotationsOf(request.resource.data) >= rotationsOf(resource.data)
+        && rotationsOf(request.resource.data) <= rotationCeiling()
+        && (
+          request.resource.data.installationId == resource.data.installationId
+          || rotationsOf(request.resource.data) == rotationsOf(resource.data) + 1
+        )
+        // The subscription a device claims must exist, be ACTIVE, and be bound to it.
+        && boundToMe(request.resource.data.subscriptionId)
+        // Never more time than the key itself grants, so a stale user document cannot
+        // outlive a key the admin has shortened.
+        && request.resource.data.expiresAt <= keyDocAfter(request.resource.data.subscriptionId).expiresAt
+      ) || (
+        isKeyStaff()
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['status', 'expiresAt', 'installationId', 'lastActiveAt', 'appVersion'])
+      ) || (
+        isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role'])
+      );
+
+      allow delete: if false;
     }
 
-    // Plaintext-shaped lookup table. Never readable or writable from a device.
+    // ------------------------------------------------------------------ subscriptionKeys
+
     match /subscriptionKeys/{keyId} {
-      allow read, write: if false;
+      // Staff read the ledger. A subscriber may read a key only when it is still unbound
+      // (so it can be activated) or already theirs — and only by knowing the plaintext.
+      allow get: if isStaff()
+        || (signedIn() && (resource.data.status == 'UNUSED' || resource.data.uid == request.auth.uid));
+      allow list: if isStaff();
+
+      // Minting is staff-only, hashes-only, and always starts UNUSED.
+      allow create: if isKeyStaff()
+        && isHash(keyId)
+        && request.resource.data.keyHash == keyId
+        && request.resource.data.status == 'UNUSED'
+        && request.resource.data.durationDays >= 1
+        && request.resource.data.durationDays <= 3650
+        && request.resource.data.createdAt <= request.time.toMillis()
+        && !('uid' in request.resource.data)
+        && !('activatedAt' in request.resource.data)
+        && request.resource.data.keys().hasAll([
+          'keyHash', 'status', 'durationDays', 'createdAt', 'createdBy'
+        ]);
+
+      // Two very different writes share this path and must not be confused:
+      allow update: if (
+        // ... a staff correction: revoke, expire, extend, rebind.
+        isKeyStaff()
+        && request.resource.data.keyHash == resource.data.keyHash
+        && request.resource.data.durationDays == resource.data.durationDays
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.status in ['UNUSED', 'ACTIVE', 'EXPIRED', 'REVOKED']
+      ) || (
+        // ... or the subscriber's activation, and the ONLY transition it may make.
+        signedIn()
+        && resource.data.status == 'UNUSED'
+        && request.resource.data.status == 'ACTIVE'
+        && request.resource.data.uid == request.auth.uid
+        // Admin-owned fields are immutable under a subscriber write.
+        && request.resource.data.keyHash == resource.data.keyHash
+        && request.resource.data.durationDays == resource.data.durationDays
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        // Duration arithmetic is checked in the database's own units; the client supplies
+        // activatedAt, but request.time pins it to this write's server timestamp.
+        && request.resource.data.activatedAt <= request.time.toMillis()
+        && request.resource.data.activatedAt >= request.time.toMillis() - 300000
+        && request.resource.data.expiresAt
+             == request.resource.data.activatedAt + resource.data.durationDays * 86400000
+        && request.resource.data.installationId.size() >= 8
+        // Everything else the minting side wrote has to survive the merge.
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'uid', 'installationId', 'activatedAt', 'expiresAt', 'lastValidatedAt'
+        ])
+      );
+
+      allow delete: if false;
+
+      // Per-key lifecycle trail, written by staff only.
+      match /lifecycle/{eventId} {
+        allow read: if isStaff();
+        allow create: if isKeyStaff();
+        allow update, delete: if false;
+      }
     }
 
-    match /userDailyStats/{id} {
-      allow read, write: if false;
+    // ------------------------------------------------------------------ devices
+
+    match /devices/{deviceId} {
+      // id is always `${uid}__${installationId}`, so ownership is derivable from the id.
+      function deviceOwner() {
+        return deviceId.split('__')[0];
+      }
+
+      allow get: if isOwner(deviceOwner()) || isStaff();
+      allow list: if isStaff()
+        || (signedIn() && request.query.limit <= 20 && deviceOwner() == request.auth.uid);
+
+      // The activation transaction creates the record for the installation it just bound
+      // and stamps rotatedAt on the one it replaced.
+      allow create: if isOwner(deviceOwner())
+        && request.resource.data.uid == deviceOwner()
+        && request.resource.data.rotatedAt == null
+        && request.resource.data.keys().hasAll([
+          'uid', 'installationId', 'deviceModel', 'appVersion', 'activatedAt', 'rotatedAt'
+        ]);
+
+      allow update: if (
+        isOwner(deviceOwner())
+        && resource.data.uid == deviceOwner()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.installationId == resource.data.installationId
+        // Closing out an old installation is the only edit a device may make to history.
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rotatedAt'])
+      ) || (
+        isKeyStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rotatedAt'])
+      );
+
+      allow delete: if false;
     }
 
-    match /contentStats/{id} {
-      allow read, write: if false;
-    }
+    // ------------------------------------------------------------------ watch sessions
 
-    match /adminAudit/{id} {
-      allow read, write: if false;
-    }
-
-    match /config/app {
-      allow read: if signedIn();
-      allow write: if false;
-    }
-
-    // Rotation history is server bookkeeping; owners may look, never edit.
-    match /devices/{id} {
-      allow read: if signedIn() && resource.data.uid == request.auth.uid;
-      allow write: if false;
-    }
-
-    // Sessions are append-and-finalize. A document becomes immutable the moment it is
-    // finalized, because updates are only permitted while the stored state is 'open'.
-    match /watchSessions/{id} {
-      allow read: if signedIn() && resource.data.uid == request.auth.uid;
+    // Append-and-finalize. A document becomes immutable the moment it is finalized,
+    // because updates are only permitted while the stored state is 'open'.
+    match /watchSessions/{sessionId} {
+      allow get: if isOwner(sessionId.split('__')[0]) || isStaff();
+      allow list: if isStaff()
+        || (signedIn() && request.query.limit <= 50 && sessionId.split('__')[0] == request.auth.uid);
 
       allow create: if signedIn()
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.state == 'open'
-        && request.resource.data.sessionId == id
-        // The document id is derived from the uid, so a user cannot park their own
-        // session under an id that looks like someone else's.
-        && id.split('__')[0] == request.auth.uid
+        && request.resource.data.sessionId == sessionId
+        && sessionId.split('__')[0] == request.auth.uid
         && request.resource.data.watchDurationMs >= 0
         && request.resource.data.watchDurationMs <= request.resource.data.durationMs
         && request.resource.data.keys().hasAll([
-          'sessionId', 'uid', 'state', 'startedAt', 'contentId', 'durationMs', 'watchDurationMs'
+          'sessionId', 'uid', 'state', 'startedAt', 'contentId', 'durationMs',
+          'watchDurationMs'
         ]);
 
       allow update: if signedIn()
@@ -82,6 +292,72 @@ service cloud.firestore {
 
       allow delete: if false;
     }
+
+    // ------------------------------------------------------------------ rollups
+
+    // Per-subscriber daily totals. With no scheduled function, the device that earns the
+    // watch time also writes the total — bounded so one client cannot invent a day of
+    // infinite viewing, and limited to its own uid by the id.
+    match /userDailyStats/{statId} {
+      function statOwner() {
+        return statId.split('__')[0];
+      }
+
+      allow get: if isOwner(statOwner()) || isStaff();
+      allow list: if isStaff()
+        || (signedIn() && request.query.limit <= 31 && statOwner() == request.auth.uid);
+
+      allow create: if isOwner(statOwner())
+        && request.resource.data.uid == statOwner()
+        && request.resource.data.watchMs >= 0
+        && request.resource.data.watchMs <= 86400000
+        && request.resource.data.sessions >= 0
+        && request.resource.data.sessions <= 200;
+
+      allow update: if isOwner(statOwner())
+        && resource.data.uid == statOwner()
+        && request.resource.data.uid == resource.data.uid
+        && request.resource.data.watchMs >= resource.data.watchMs
+        && request.resource.data.watchMs <= 86400000
+        && request.resource.data.sessions >= resource.data.sessions
+        && request.resource.data.sessions <= 200;
+
+      allow delete: if false;
+    }
+
+    // Content totals are the one rollup no client may write: the document id is a content
+    // id, so a subscriber could inflate a title that is nothing to do with them. It stays
+    // read-only until there is a backend to aggregate it.
+    match /contentStats/{contentId} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+
+    // ------------------------------------------------------------------ config + audit
+
+    match /config/{docId} {
+      allow read: if signedIn();
+      allow write: if isAdmin()
+        && docId == 'app'
+        && request.resource.data.offlineGraceMinutes >= 0
+        && request.resource.data.offlineGraceMinutes <= 10080
+        && request.resource.data.keyDurationDays >= 1
+        && request.resource.data.keyDurationDays <= 3650
+        && request.resource.data.maxInstallationRotations >= 0
+        && request.resource.data.maxInstallationRotations <= 100;
+    }
+
+    // Append-only. Every privileged action in the admin app lands here, and nobody gets to
+    // edit history.
+    match /adminAudit/{id} {
+      allow read: if isStaff();
+      allow create: if isKeyStaff()
+        && request.resource.data.actor == request.auth.token.email
+        && request.resource.data.keys().hasAll(['actor', 'action', 'targetType', 'targetId', 'timestamp']);
+      allow update, delete: if false;
+    }
+
+    // ------------------------------------------------------------------ default deny
 
     match /{document=**} {
       allow read, write: if false;

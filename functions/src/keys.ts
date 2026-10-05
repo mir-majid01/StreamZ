@@ -1,39 +1,52 @@
 import { createHash, randomBytes } from 'crypto';
 
-// Crockford base32 minus I, L, O, U. Must agree with the client normalizer; both are
-// tested against the same fixtures/keyNormalization.json vectors.
-const ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
-const PREFIX = 'FLK';
-const BODY_LENGTH = 12;
-const HASH_VERSION = 'streamz:v1';
+// Canonical key format, owned by StreamZ Admin (core/domain/util/KeyGenerator.kt) and
+// mirrored by the user app (src/firebase/subscriptions/keyFormat.ts). Four groups of
+// five characters from an alphabet without the confusable 0/O and 1/I/L. All three
+// implementations are tested against the same fixtures/keyNormalization.json vectors.
+const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const SZ_PREFIX = 'SZ';
+const FLK_PREFIX = 'FLK';
+const GROUPS = 4;
+const GROUP_LENGTH = 5;
+const BODY_LENGTH = GROUPS * GROUP_LENGTH;
 
 function inAlphabet(body: string): boolean {
-  for (const c of body) if (!ALPHABET.includes(c)) return false;
+  for (const character of body) if (!ALPHABET.includes(character)) return false;
   return true;
 }
 
 export function normalizeKeyBody(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const cleaned = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  if (cleaned.length === PREFIX.length + BODY_LENGTH && cleaned.startsWith(PREFIX)) {
-    const body = cleaned.slice(PREFIX.length);
-    return inAlphabet(body) ? body : null;
-  }
-  if (cleaned.length === BODY_LENGTH) return inAlphabet(cleaned) ? cleaned : null;
-  return null;
+  const body =
+    cleaned.length === BODY_LENGTH
+      ? cleaned
+      : cleaned.startsWith(FLK_PREFIX) && cleaned.length - FLK_PREFIX.length <= BODY_LENGTH
+        ? cleaned.slice(FLK_PREFIX.length)
+        : cleaned.length === SZ_PREFIX.length + BODY_LENGTH && cleaned.startsWith(SZ_PREFIX)
+          ? cleaned.slice(SZ_PREFIX.length)
+          : cleaned;
+  if (body.length !== BODY_LENGTH) return null;
+  return inAlphabet(body) ? body : null;
+}
+
+/** The exact string a key was minted as — and therefore the only hash preimage. */
+export function canonicalPlaintext(body: string): string {
+  return body.replace(/(.{5})/g, '$1-').replace(/-$/, '');
 }
 
 export function hashKey(body: string): string {
-  return createHash('sha256').update(`${HASH_VERSION}:${body}`).digest('hex');
+  return createHash('sha256').update(canonicalPlaintext(body)).digest('hex');
 }
 
 export function formatKey(body: string): string {
-  return `${PREFIX}-${body.slice(0, 4)}-${body.slice(4, 8)}-${body.slice(8, 12)}`;
+  return canonicalPlaintext(body);
 }
 
 /**
  * Rejection sampling: uniform bytes would bias the last characters because 256 is not a
- * multiple of 32, and a biased keyspace is a weaker keyspace.
+ * multiple of the alphabet length, and a biased keyspace is a weaker keyspace.
  */
 export function randomKeyBody(): string {
   const out: string[] = [];

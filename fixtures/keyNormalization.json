@@ -1,22 +1,22 @@
 {
-  "_comment": "Shared normalization vectors. Consumed by BOTH the jest client suite and the Cloud Functions suite, which proves the two runtimes agree without sharing source. Alphabet is Crockford base32 minus I, L, O, U.",
   "valid": [
-    { "raw": "flk-7h3k-92pq-x8km", "normalized": "7H3K92PQX8KM" },
-    { "raw": "7H3K92PQX8KM", "normalized": "7H3K92PQX8KM" },
-    { "raw": "  FLK 7H3K 92PQ X8KM  ", "normalized": "7H3K92PQX8KM" },
-    { "raw": "flk2468akmnpqrs", "normalized": "2468AKMNPQRS" }
+    { "raw": "8JKM2-NPQRS-4T6VW-7XYZA", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "8jkm2npqrs4t6vw7xyza", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "  8JKM2 NPQRS 4T6VW 7XYZA  ", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "8JKM2_NPQRS-4T6VW.7XYZA", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "SZ-8JKM2-NPQRS-4T6VW-7XYZA", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "sz8jkm2npqrs4t6vw7xyza", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "FLK-8JKM2-NPQRS-4T6VW-7XYZA", "normalized": "8JKM2NPQRS4T6VW7XYZA" },
+    { "raw": "SZJ2K-MN3PQ-RS4TV-W6X7A", "normalized": "SZJ2KMN3PQRS4TVW6X7A" }
   ],
   "invalid": [
-    { "raw": "7H3K92PQX8K", "reason": "too short (11)" },
-    { "raw": "7H3K92PQX8KMM", "reason": "too long (13)" },
-    { "raw": "7H3K92PQX8KI", "reason": "contains I" },
-    { "raw": "7H3K92PQXL8K", "reason": "contains L" },
-    { "raw": "7H3K92PQX8O0", "reason": "contains O" },
-    { "raw": "7H3K92PQX8U0", "reason": "contains U" },
-    { "raw": "", "reason": "empty" },
-    { "raw": "   ", "reason": "whitespace only" },
-    { "raw": "';DROP--", "reason": "injection attempt cleans to 4 chars" },
-    { "raw": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "reason": "absurd length" },
-    { "raw": "FLKABCDEFGH123", "reason": "a 12-char body cannot itself start with FLK because L is not in the alphabet" }
+    { "raw": "" },
+    { "raw": "8JKM2-NPQRS-4T6VW-7XYZ" },
+    { "raw": "8JKM2-NPQRS-4T6VW-7XYZAB" },
+    { "raw": "0IL1O-NPQRS-4T6VW-7XYZA" },
+    { "raw": "8JKM2-NPQRS-4T6VW-7XYZ1" },
+    { "raw": "!!!!" },
+    { "raw": "SZ-8JKM2-NPQRS-4T6VW" },
+    { "raw": "你好世界" }
   ]
 }
