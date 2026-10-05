@@ -13,6 +13,7 @@ import {
   type AccessResult,
   type AccessStatus,
   type ActivateResult,
+  type AppConfigDoc,
   type DeviceDoc,
 } from '@/src/firebase/models';
 
@@ -269,6 +270,44 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
     );
   } catch (e) {
     if (isFirestoreTransportFailure(e)) throw new TransportError('transport');
+    throw e;
+  }
+}
+
+/** Bounds the app will honour, independent of what the config document happens to say. */
+const clamp = (value: unknown, min: number, max: number, fallback: number): number => {
+  const n = num(value, fallback);
+  return n < min || n > max ? fallback : n;
+};
+
+/**
+ * `config/app` is written by staff, so it is treated as untrusted input on the way into the
+ * gate: an out-of-range grace period would either lock every offline user out or hand them
+ * unlimited access. The rules bound admin writes; this bounds what a device will act on.
+ */
+export async function readConfig(): Promise<AppConfigDoc> {
+  if (!ensureFirebase()) return CONFIG_DEFAULTS;
+  try {
+    const snap = await withTimeout(
+      getDoc(doc(getFirestore(), 'config', 'app')),
+      VALIDATE_TIMEOUT_MS,
+    );
+    if (!snap.exists()) return CONFIG_DEFAULTS;
+    const raw = asRecord(snap.data());
+    return {
+      offlineGraceMinutes: clamp(raw.offlineGraceMinutes, 0, 10_080, CONFIG_DEFAULTS.offlineGraceMinutes),
+      keyDurationDays: clamp(raw.keyDurationDays, 1, 3650, CONFIG_DEFAULTS.keyDurationDays),
+      maxInstallationRotations: clamp(
+        raw.maxInstallationRotations,
+        0,
+        100,
+        CONFIG_DEFAULTS.maxInstallationRotations,
+      ),
+      staleSessionMinutes: clamp(raw.staleSessionMinutes, 1, 1440, CONFIG_DEFAULTS.staleSessionMinutes),
+      minAppVersion: typeof raw.minAppVersion === 'string' ? raw.minAppVersion : CONFIG_DEFAULTS.minAppVersion,
+    };
+  } catch (e) {
+    if (isFirestoreTransportFailure(e)) return CONFIG_DEFAULTS;
     throw e;
   }
 }

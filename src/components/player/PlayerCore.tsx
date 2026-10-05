@@ -53,6 +53,7 @@ import {
 import { useControlsVisibility } from '@/src/components/player/useControlsVisibility';
 import { useTVRemote } from '@/src/components/player/useTVRemote';
 import { useContinueWatching } from '@/src/hooks/useContinueWatching';
+import { useWatchSession } from '@/src/hooks/useWatchSession';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
 import { useDevicePlaybackLevels } from '@/src/hooks/useDevicePlaybackLevels';
 import {
@@ -193,6 +194,7 @@ export const PlayerCore = ({
   const isFocused = useIsFocused();
   const { servers, activeServer } = useServers();
   const { upsert, advanceEpisode } = useContinueWatching();
+  const { note: noteWatchSession } = useWatchSession(item, season, episode);
   const {
     enabled: partyEnabled,
     role: partyRole,
@@ -936,9 +938,12 @@ export const PlayerCore = ({
   const saveProgress = useCallback(() => {
     const pos = currentTimeRef.current;
     const dur = durationRef.current;
+    // Recorded from the same seam as Continue Watching: it already fires on a throttle and
+    // on unmount, so the session rides a path that is known not to touch a released player.
+    noteWatchSession(pos, dur);
     if (pos < 5) return;
     upsert({ item, position: pos, duration: dur, season, episode });
-  }, [upsert, item, season, episode]);
+  }, [upsert, item, season, episode, noteWatchSession]);
 
   useEffect(() => {
     if (currentTime - lastSavedRef.current < 5) return;

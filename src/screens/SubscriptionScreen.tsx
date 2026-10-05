@@ -11,6 +11,7 @@ import { StreamZWordmark } from '@/src/components/StreamZWordmark';
 import { BRAND } from '@/src/config/brand';
 import { formatKeyInput, looksPlausible } from '@/src/firebase/subscriptions/keyFormat';
 import { activate, TransportError } from '@/src/firebase/subscriptions/api';
+import { AppEvent, logAppEvent } from '@/src/firebase/analytics/appEvents';
 import { describeActivation } from '@/src/firebase/errors';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 
@@ -37,6 +38,9 @@ export const SubscriptionScreen = () => {
     setError(null);
     try {
       const result = await activate(raw);
+      // The outcome code only. Never the key, not even a hash of it: an analytics event is
+      // a copy of its payload into a third-party pipeline.
+      logAppEvent(AppEvent.KEY_ACTIVATION, { result: result.code });
       if (result.code === 'ACTIVATED') {
         setJustActivated(true);
         await refresh();

@@ -3,9 +3,15 @@ import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getAuth, onAuthStateChanged, type User } from '@react-native-firebase/auth';
 import { decideGate, routeFor, shouldRevalidate, type GateFacts } from '@/src/firebase/subscriptions/gate';
-import { validate, TransportError } from '@/src/firebase/subscriptions/api';
+import { readConfig, validate, TransportError } from '@/src/firebase/subscriptions/api';
+import { startPresenceHeartbeat } from '@/src/firebase/analytics/appEvents';
 import { disableAdvertisingId, ensureFirebase, setAnalyticsUser } from '@/src/firebase/init';
-import { CONFIG_DEFAULTS, graceMsFrom, type AccessResult } from '@/src/firebase/models';
+import {
+  CONFIG_DEFAULTS,
+  graceMsFrom,
+  type AccessResult,
+  type AppConfigDoc,
+} from '@/src/firebase/models';
 import type { GateDecision } from '@/src/firebase/models';
 
 const CACHE_KEY = 'streamz.access.cache';
@@ -50,12 +56,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [live, setLive] = useState<AccessResult | null>(null);
   const [transportFailed, setTransportFailed] = useState(false);
   const [lastGoodAuthorizedAt, setLastGood] = useState<number | null>(null);
+  const [config, setConfig] = useState<AppConfigDoc>(CONFIG_DEFAULTS);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const inFlight = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     void disableAdvertisingId();
     void readCache().then((c) => setLastGood(c.lastGoodAuthorizedAt));
+    // Grace is configured, not hardcoded: the admin may shorten it, and a device that kept
+    // using the compiled default would silently enforce a policy the project changed.
+    void readConfig()
+      .then(setConfig)
+      .catch(() => setConfig(CONFIG_DEFAULTS));
   }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -144,12 +156,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       transportFailed,
       lastGoodAuthorizedAt,
       nowMs,
-      graceMs: graceMsFrom(CONFIG_DEFAULTS),
+      graceMs: graceMsFrom(config),
     }),
-    [uid, liveUid, live, transportFailed, lastGoodAuthorizedAt, nowMs],
+    [uid, liveUid, live, transportFailed, lastGoodAuthorizedAt, nowMs, config],
   );
 
   const decision = decideGate(facts);
+
+  // Presence is only meaningful for someone who is allowed in.
+  useEffect(() => {
+    if (decision !== 'ready' && decision !== 'offlineCached') return;
+    return startPresenceHeartbeat();
+  }, [decision]);
 
   const value: SessionValue = {
     decision,

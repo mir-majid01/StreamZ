@@ -9,6 +9,7 @@ import { Button, ButtonSpinner, ButtonText } from '@/components/ui/button';
 import { StreamZWordmark } from '@/src/components/StreamZWordmark';
 import { BRAND } from '@/src/config/brand';
 import { signInWithGoogle } from '@/src/firebase/auth/googleAuth';
+import { AppEvent, logAppEvent } from '@/src/firebase/analytics/appEvents';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 
 /**
@@ -28,7 +29,10 @@ export const LoginScreen = () => {
     const result = await signInWithGoogle();
     setBusy(false);
     if (result.kind === 'error') setError(result.message);
-    if (result.kind === 'success') await refresh();
+    if (result.kind === 'success') {
+      logAppEvent(AppEvent.SIGN_IN, { method: 'google' });
+      await refresh();
+    }
   };
 
   return (
