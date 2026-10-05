@@ -84,10 +84,10 @@ export const SubscriptionScreen = () => {
               <InputField
                 value={raw}
                 onChangeText={onChange}
-                placeholder="FLK-XXXX-XXXX-XXXX"
+                placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
                 autoCapitalize="characters"
                 autoCorrect={false}
-                maxLength={20}
+                maxLength={26}
                 returnKeyType="go"
                 onSubmitEditing={() => void onActivate()}
                 className="px-4 py-3 text-white"
