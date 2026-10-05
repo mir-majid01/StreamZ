@@ -30,6 +30,13 @@ jobs:
       - name: Unit tests
         run: npx jest --ci --maxWorkers=2
 
+      - name: Firestore security rules tests
+        run: npx firebase-tools emulators:exec --only firestore "npx jest -c jest.emulator.config.js --ci --forceExit"
+
+      - name: Typecheck Cloud Functions
+        working-directory: functions
+        run: npm ci && npx tsc --noEmit
+
       - name: Build debug APK
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
