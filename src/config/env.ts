@@ -62,6 +62,17 @@ export const LIVE_TV_CONFIG = {
   enabled: FLIXQUEST_CONFIG.enabled || LIVE_TV_M3U_CONFIG.enabled,
 } as const;
 
+/**
+ * OAuth *web* client ID — the audience a Google ID token is minted for, which is
+ * what lets Firebase Auth exchange it for a Firebase session. Firebase generates
+ * one per project and exports it inside google-services.json as `client_type: 3`,
+ * so the default below is the same public identifier already shipped in the APK.
+ * Override with EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID when a different project is wired.
+ */
+export const GOOGLE_WEB_CLIENT_ID =
+  process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim() ||
+  '283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com';
+
 export const UPDATE_CONFIG = {
   OWNER: process.env.EXPO_PUBLIC_UPDATE_REPO_OWNER || 'sheeshcake',
   REPO: process.env.EXPO_PUBLIC_UPDATE_REPO_NAME || 'Flickv4',

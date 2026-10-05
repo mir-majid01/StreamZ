@@ -12,7 +12,20 @@
           "package_name": "stream.z"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "283831382421-v8t5rlc1g8oj5ptsjiva09fs9pbc583u.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "stream.z",
+            "certificate_hash": "2b70f1abdd5a1c3fc0ff351a91c407c4fecfb437"
+          }
+        },
+        {
+          "client_id": "283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyAOANiv1lOVCvzqHuhHXYFGlyG0PBa_ZnE"
@@ -20,7 +33,49 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:283831382421:android:ec54e68acce2d6a815c69c",
+        "android_client_info": {
+          "package_name": "stream.z.admin"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "283831382421-nap3q4df4piosh537b75db9liidkib7s.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "stream.z.admin",
+            "certificate_hash": "2b70f1abdd5a1c3fc0ff351a91c407c4fecfb437"
+          }
+        },
+        {
+          "client_id": "283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOANiv1lOVCvzqHuhHXYFGlyG0PBa_ZnE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
         }
       }
     }

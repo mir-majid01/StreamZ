@@ -5,12 +5,8 @@ import {
   signInWithCredential,
   signOut as firebaseSignOut,
 } from '@react-native-firebase/auth';
-import { BRAND } from '@/src/config/brand';
+import { GOOGLE_WEB_CLIENT_ID } from '@/src/config/env';
 import { describeAuthError } from '@/src/firebase/errors';
-
-// The OAuth *web* client ID from the Firebase console — not anything in
-// google-services.json. The ID token must be audenced to the web client.
-const webClientId = process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID;
 
 export type SignInOutcome =
   | { kind: 'success'; uid: string }
@@ -18,7 +14,7 @@ export type SignInOutcome =
   | { kind: 'error'; message: string };
 
 export function configureGoogleSignIn(): void {
-  GoogleSignin.configure({ webClientId });
+  GoogleSignin.configure({ webClientId: GOOGLE_WEB_CLIENT_ID });
 }
 
 export async function signInWithGoogle(): Promise<SignInOutcome> {
