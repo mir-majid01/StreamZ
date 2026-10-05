@@ -61,6 +61,11 @@ service cloud.firestore {
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.state == 'open'
         && request.resource.data.sessionId == id
+        // The document id is derived from the uid, so a user cannot park their own
+        // session under an id that looks like someone else's.
+        && id.split('__')[0] == request.auth.uid
+        && request.resource.data.watchDurationMs >= 0
+        && request.resource.data.watchDurationMs <= request.resource.data.durationMs
         && request.resource.data.keys().hasAll([
           'sessionId', 'uid', 'state', 'startedAt', 'contentId', 'durationMs', 'watchDurationMs'
         ]);
