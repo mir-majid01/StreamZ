@@ -1,7 +1,7 @@
 import { HStack } from '@/components/ui/hstack';
 import { Box } from '@/components/ui/box';
 import { Text } from '@/components/ui/text';
-import { FlickLogo } from '@/src/components/FlickLogo';
+import { StreamZWordmark } from '@/src/components/StreamZWordmark';
 import type { ReactNode } from 'react';
 import Animated, {
   Extrapolation,
@@ -82,8 +82,8 @@ export const AppHeader = ({
         className="items-center space-between pt-3 pb-1"
         style={{ paddingHorizontal }}
       >
-        <Animated.View style={[{ width: 64, height: 32 }, logoStyle]}>
-          <FlickLogo width={64} height={32} />
+        <Animated.View style={[{ width: 88, height: 32, justifyContent: 'center' }, logoStyle]}>
+          <StreamZWordmark size={19} />
         </Animated.View>
         <HStack space="sm" className="items-center">
           <AnimatedText

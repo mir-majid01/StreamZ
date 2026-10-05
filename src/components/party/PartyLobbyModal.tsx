@@ -17,6 +17,8 @@ import { useWatchParty } from '@/src/hooks/useWatchParty';
 import { PARTY_DISPLAY_NAME_MAX } from '@/src/party/displayName';
 import type { PartyClock, PartyContent } from '@/src/party/protocol';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
+import { BRAND } from '@/src/config/brand';
+import { PARTY_SCHEME } from '@/src/party/protocol';
 
 interface PartyLobbyModalProps {
   visible: boolean;
@@ -121,10 +123,10 @@ export const PartyLobbyModal = ({
 
   const onShare = async () => {
     if (!room) return;
-    const link = companionUrl ?? `flick://party/${room.code}`;
+    const link = companionUrl ?? `${PARTY_SCHEME}://party/${room.code}`;
     try {
       await Share.share({
-        message: `Join my Flick watch party ${room.code}\n${link}`,
+        message: `Join my ${BRAND.name} watch party ${room.code}\n${link}`,
       });
     } catch {
       // ignored
@@ -172,8 +174,8 @@ export const PartyLobbyModal = ({
                 <VStack space="md">
                   <Text size="sm" className="text-muted-foreground">
                     {content?.title
-                      ? `Create a room for ${content.title}. Friends can join from Flick or the web.`
-                      : 'Create a room. Friends can join from Flick or the web.'}
+                      ? `Create a room for ${content.title}. Friends can join from the app or the web.`
+                      : 'Create a room. Friends can join from the app or the web.'}
                   </Text>
                   <VStack space="xs">
                     <Text size="sm" className="text-muted-foreground">

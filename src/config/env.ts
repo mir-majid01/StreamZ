@@ -4,6 +4,8 @@
  * never hardcoded in source. See `.env.example` for the required keys.
  */
 
+import { FEATURES } from '@/src/config/features';
+
 const required = (value: string | undefined, name: string): string => {
   if (!value) {
     console.warn(`[env] Missing ${name}. Add it to your .env file.`);
@@ -39,7 +41,9 @@ export const SAMPLE_VIDEO_URL =
 // Watch-party WebSocket, e.g. wss://flickv4.nibbleph.dev
 export const WATCH_PARTY_CONFIG = {
   url: process.env.EXPO_PUBLIC_WATCH_PARTY_URL?.trim() || '',
-  enabled: Boolean(process.env.EXPO_PUBLIC_WATCH_PARTY_URL?.trim()),
+  // The flag wins over the environment: a build that hides a feature must hide it even when
+  // a server URL is configured, or the settings row and player buttons stay visible.
+  enabled: FEATURES.watchParty && Boolean(process.env.EXPO_PUBLIC_WATCH_PARTY_URL?.trim()),
 } as const;
 
 /** FlixQuest scraper API (VOD providers + DLHD live TV). Empty = feature off. */
@@ -57,9 +61,9 @@ export const LIVE_TV_M3U_CONFIG = {
   enabled: true,
 } as const;
 
-/** Live tab is shown when FlixQuest DLHD and/or the PH M3U playlist is on. */
+/** Live tab is shown when the Phase 1A flag is on and a source is configured. */
 export const LIVE_TV_CONFIG = {
-  enabled: FLIXQUEST_CONFIG.enabled || LIVE_TV_M3U_CONFIG.enabled,
+  enabled: FEATURES.liveTv && (FLIXQUEST_CONFIG.enabled || LIVE_TV_M3U_CONFIG.enabled),
 } as const;
 
 /**
@@ -77,6 +81,12 @@ export const UPDATE_CONFIG = {
   OWNER: process.env.EXPO_PUBLIC_UPDATE_REPO_OWNER || 'sheeshcake',
   REPO: process.env.EXPO_PUBLIC_UPDATE_REPO_NAME || 'Flickv4',
   API_BASE_URL: 'https://api.github.com',
+  /**
+   * Off in Phase 1A. This polls a GitHub repo's releases and then hands the APK straight to
+   * the package installer, so with the defaults it would offer a StreamZ user upstream
+   * Flick's build. It stays disabled until the owner points it at their own releases.
+   */
+  enabled: FEATURES.updateChecker,
   /** Minimum hours between automatic update checks. */
   CHECK_INTERVAL_HOURS: 24,
   /** Delay in ms after mount before the first check, so app boot is snappy. */

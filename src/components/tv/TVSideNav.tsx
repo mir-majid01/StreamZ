@@ -14,7 +14,7 @@ import Animated, {
 import { VStack } from '@/components/ui/vstack';
 import { Box } from '@/components/ui/box';
 import { Icon } from '@/components/ui/icon';
-import { FlickLogo } from '@/src/components/FlickLogo';
+import { StreamZWordmark } from '@/src/components/StreamZWordmark';
 import { Text } from '@/components/ui/text';
 import { HStack } from '@/components/ui/hstack';
 import { Focusable } from '@/src/components/Focusable';
@@ -91,11 +91,8 @@ export const TVSideNav = forwardRef<TVSideNavHandle, TVSideNavProps>(
         }`}
         style={animatedStyle}
       >
-        <Box className={collapsed ? 'mb-8 h-10 w-10' : 'mb-8 h-16 w-20'}>
-          <FlickLogo
-            width={collapsed ? 40 : 80}
-            height={collapsed ? 40 : 64}
-          />
+        <Box className={`mb-8 justify-center ${collapsed ? 'h-10' : 'h-16'}`}>
+          <StreamZWordmark size={collapsed ? 14 : 22} />
         </Box>
         {TABS.map(({ key, label, icon }, index) => {
           const active = key === activeTab;

@@ -21,6 +21,7 @@ import { DownloadsProvider } from '@/src/hooks/useDownloads';
 import { WatchPartyProvider } from '@/src/hooks/useWatchParty';
 import { DownloadResolverHost } from '@/src/components/DownloadResolverHost';
 import { UpdateChecker } from '@/src/components/UpdateChecker';
+import { UPDATE_CONFIG } from '@/src/config/env';
 import { lockPortrait } from '@/src/utils/orientation';
 import { bootstrapDownloadPermissions } from '@/src/utils/downloadPermissions';
 import '@/global.css';
@@ -56,7 +57,7 @@ export default function App() {
                                     <StatusBar style="light" />
                                     <AppNavigator />
                                     <DownloadResolverHost />
-                                    <UpdateChecker />
+                                    {UPDATE_CONFIG.enabled ? <UpdateChecker /> : null}
                                   </WatchPartyProvider>
                                 </DownloadsProvider>
                               </ContinueWatchingProvider>

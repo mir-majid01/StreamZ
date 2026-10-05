@@ -5,12 +5,13 @@ import { Text } from '@/components/ui/text';
 import { VStack } from '@/components/ui/vstack';
 import { UpdateModal } from '@/src/components/UpdateModal';
 import {
-  FlickSwoopLogo,
+  StreamZSplashWordmark,
   TOTAL_MS,
   WORD_REVEAL_MS,
   splashLogoSize,
-} from '@/src/components/splash/FlickSwoopLogo';
+} from '@/src/components/splash/StreamZSplashWordmark';
 import loadingMessages from '@/src/constants/loadingMessages.json';
+import { UPDATE_CONFIG } from '@/src/config/env';
 import { useServers } from '@/src/hooks/useServers';
 import { useHomeData } from '@/src/hooks/useHomeData';
 import { useCatalogRegion } from '@/src/hooks/useCatalogRegion';
@@ -33,8 +34,13 @@ const MESSAGES: string[] = Array.isArray(loadingMessages)
 const MESSAGE_INTERVAL = 1000;
 const LAND_MS = 200;
 
-/** Soft-fail update check so a network blip never blocks entering Main. */
+/**
+ * Soft-fail update check so a network blip never blocks entering Main. Disabled entirely in
+ * Phase 1A: with the defaults this polls the upstream Flick releases and would offer a
+ * StreamZ user somebody else's APK.
+ */
 const checkUpdatesSafe = async (): Promise<UpdateInfo | null> => {
+  if (!UPDATE_CONFIG.enabled) return null;
   try {
     return await updateService.checkForUpdates();
   } catch {
@@ -187,7 +193,7 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         className="absolute inset-0 items-center justify-center overflow-visible"
         pointerEvents="none"
       >
-        <FlickSwoopLogo onDrawEnd={onIdentDrawEnd} />
+        <StreamZSplashWordmark onDrawEnd={onIdentDrawEnd} />
       </Box>
 
       <VStack

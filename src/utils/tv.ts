@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { FEATURES } from '@/src/config/features';
 
 /** True when running on an Android TV / tvOS leanback device. */
 export const isTV = Platform.isTV === true;
@@ -20,11 +21,11 @@ export const isMacCatalyst: boolean = (() => {
 })();
 
 /**
- * Layout-level shorthand for "use the ten-foot / desktop shell". True on
- * Android TV / tvOS and on Mac Catalyst so macOS reuses the TV navigator,
- * grid, and spacing without any per-screen branching.
+ * Layout-level shorthand for "use the ten-foot / desktop shell". True on Android TV / tvOS
+ * and on Mac Catalyst so macOS reuses the TV navigator, grid, and spacing without any
+ * per-screen branching. Phase 1A ships phones only, so the flag — not the device — decides.
  */
-export const isTVLayout = isTV || isMacCatalyst;
+export const isTVLayout = FEATURES.tvLayout && (isTV || isMacCatalyst);
 
 /**
  * Canonical TV D-pad focus ring: a 2px primary-colored border, used by every

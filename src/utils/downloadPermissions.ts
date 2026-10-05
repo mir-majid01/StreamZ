@@ -1,6 +1,7 @@
 import { Alert, Linking, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
+import { BRAND } from '@/src/config/brand';
 
 /**
  * Permission helper for the download stack.
@@ -99,7 +100,7 @@ export const ensureDownloadPermissions = async (): Promise<boolean> => {
     return await new Promise<boolean>((resolve) => {
       Alert.alert(
         'Enable download notifications',
-        'Flick uses notifications to show download progress. You can turn this on in Settings.',
+        `${BRAND.name} uses notifications to show download progress. You can turn this on in Settings.`,
         [
           {
             text: 'Not now',

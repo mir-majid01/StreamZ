@@ -10,6 +10,7 @@ import { Icon } from '@/components/ui/icon';
 import { Button, ButtonText } from '@/components/ui/button';
 import { Focusable } from '@/src/components/Focusable';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
+import { BRAND } from '@/src/config/brand';
 
 interface WatchPartyIntroModalProps {
   visible: boolean;
@@ -83,7 +84,7 @@ export const WatchPartyIntroModal = ({
             <Text size="sm" className="text-muted-foreground">
               Watch the same title together. Each device plays its own stream;
               the room only syncs play, pause, and seek. Friends can join from
-              Flick or the web companion.
+              {BRAND.name} or the web companion.
             </Text>
             <Text size="sm" className="text-muted-foreground">
               This feature is in beta rooms, sync, and the web player may be

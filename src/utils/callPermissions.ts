@@ -1,6 +1,7 @@
 import { Alert, Linking, PermissionsAndroid, Platform } from 'react-native';
 import { permissions } from 'react-native-webrtc';
 import { isMacCatalyst } from '@/src/utils/tv';
+import { BRAND } from '@/src/config/brand';
 
 const NAMES = ['camera', 'microphone'] as const;
 
@@ -45,7 +46,7 @@ const promptSettings = (): Promise<boolean> =>
   new Promise((resolve) => {
     Alert.alert(
       'Camera and microphone',
-      'Flick needs camera and microphone access for the party video call. Enable them in Settings, then tap Join camera again.',
+      `${BRAND.name} needs camera and microphone access for the party video call. Enable them in Settings, then tap Join camera again.`,
       [
         {
           text: 'Not now',

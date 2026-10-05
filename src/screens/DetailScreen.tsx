@@ -94,6 +94,7 @@ import { WatchPartyIntroModal } from '@/src/components/party/WatchPartyIntroModa
 import { partyContentFromItem } from '@/src/party/content';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
 import type { RootStackScreenProps } from '@/src/navigation/types';
+import { BRAND } from '@/src/config/brand';
 
 const AnimatedBox = Animated.createAnimatedComponent(Box);
 
@@ -270,7 +271,7 @@ export const DetailScreen = ({
   const onShare = async () => {
     try {
       await Share.share({
-        message: `Watch ${getTitle(item)} on Flick`,
+        message: `Watch ${getTitle(item)} on ${BRAND.name}`,
       });
     } catch {
       // ignored

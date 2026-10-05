@@ -1,5 +1,11 @@
 import { BRAND, LEGAL } from '@/src/config/brand';
 import { FEATURES } from '@/src/config/features';
+import {
+  LIVE_TV_CONFIG,
+  UPDATE_CONFIG,
+  WATCH_PARTY_CONFIG,
+} from '@/src/config/env';
+import { isTVLayout } from '@/src/utils/tv';
 import { CONFIG_DEFAULTS, type AccessResult, type UserDoc } from '@/src/firebase/models';
 
 jest.mock('expo-secure-store', () => {
@@ -38,6 +44,34 @@ describe('brand config', () => {
 
   it('disables deferred surfaces in Phase 1A', () => {
     expect(FEATURES).toEqual({ liveTv: false, watchParty: false, tvLayout: false, updateChecker: false });
+  });
+});
+
+/**
+ * A flag nobody reads is worse than no flag, because it reads as handled. These assert the
+ * derived configuration — which is what every screen actually consults — so a change that
+ * reintroduces an ungated entry point fails here.
+ */
+describe('feature flags gate the surfaces they name', () => {
+  it('hides Live TV even with a playlist configured', () => {
+    expect(LIVE_TV_CONFIG.enabled).toBe(false);
+  });
+
+  it('hides the watch party even with a party server configured', () => {
+    expect(WATCH_PARTY_CONFIG.enabled).toBe(false);
+  });
+
+  it('keeps the ten-foot shell off on this build', () => {
+    expect(isTVLayout).toBe(false);
+  });
+
+  it('switches the updater off, and records why it must stay off', () => {
+    expect(UPDATE_CONFIG.enabled).toBe(false);
+    // Its defaults poll upstream Flick's releases and hand the found APK to the installer,
+    // so enabling it before pointing it at StreamZ's own releases would offer a StreamZ
+    // user somebody else's build.
+    expect(UPDATE_CONFIG.OWNER).toBe('sheeshcake');
+    expect(UPDATE_CONFIG.REPO).toBe('Flickv4');
   });
 });
 
