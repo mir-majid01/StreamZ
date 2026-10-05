@@ -1404,24 +1404,59 @@ it('drops the false no-hosted-content disclaimer', () => {
 
 ## Appendix A — Owner setup checklist, in dependency order
 
-Google Sign-In is blocked until items 1-6 are done; nothing in Tasks 18-22 can be verified before that. Items 7-9 can happen in parallel with Stage 2. Item 10 is the last one and is irreversible-ish.
+**Rewritten 2026-10-05 for spec Amendment 3.** The project stays on the free **Spark** plan,
+so nothing here involves Cloud Functions. Items 1-4 are already done in the repository; items
+5-11 are console actions only you can perform, and they are listed in the order that unblocks
+the first end-to-end test on a phone.
 
-1. **Blaze plan** on Firebase project `streamz-c98b9` (console → Usage and billing → upgrade). Cloud Functions, Firestore triggers and scheduled jobs cannot deploy on Spark. A card is required even at near-zero expected cost. **Blocks everything from Task 11 onward.**
-2. **Confirm project ownership** — that this project is yours and not shared with other work.
-3. **Register the Android app** with package name exactly `stream.z`.
-4. **Add both SHA-1 fingerprints** — debug (from `android/app/debug.keystore`, captured in Task 1 Step 5) and release (from the new keystore, Task 10 Step 1). This is what populates the currently empty `oauth_client` array.
-5. **Enable Authentication → Sign-in method → Google**, then note the **OAuth web client ID** it creates. `GoogleSignin.configure({ webClientId })` needs that ID; `google-services.json` alone is not enough and is the single most common reason sign-in fails after a correct setup.
-6. **OAuth consent screen** — external, product name StreamZ, support and developer emails set, scopes `email` + `profile` only.
-7. **Create Firestore** in production mode, nearest region. Never enable test rules; Task 11 ships real ones.
-8. **Re-download `google-services.json`** after items 3-5 and place it at `android/app/google-services.json`. Confirm `package_name == "stream.z"`.
-9. **Restrict the mobile API key** in Google Cloud console → APIs and services → Credentials: Android apps, package `stream.z` plus the SHA-1s from item 4.
-10. **Provision your own TMDB v4 key.** The key committed in upstream `build-ios.yml:27-30` belongs to the original author and is already public in his history — do not use it and do not try to "rotate" it; it isn't yours. Task 27 deletes that workflow.
-11. ~~Jellyfin server~~ **cancelled by spec Amendment 2** — no media server is provisioned, configured, or integrated in this project.
-12. **Functions secrets** — Phase 1A needs none. If a secret is ever required, set it with `npx -y firebase-tools@latest functions:secrets:set NAME`; never plain env, never committed.
-13. **Create your own fork and repoint `origin`** (fork URL pending from the owner; the clone still targets `sheeshcake/Flickv4`, so nothing is pushed until it is set). **The repository may stay private during development** — GPL-3.0 obligations attach at *distribution*, not before. The moment you hand out the APK you owe every recipient the corresponding source of your modified version, the unchanged `LICENSE`, and the attribution block. Plan for that as a release step, not a repo-visibility setting.
-14. **First key batch, decided 2026-10-03:** `generateKeys({ count: 10, durationDays: 30 })` — matching `config/app.keyDurationDays: 30`. The 10 plaintext keys are returned once and are never recoverable afterwards (decision 11), so store them in a password manager, not in the repo. Invoke this once Task 15 is in place so Task 22 can be tested end to end with a real key.
+1. ~~Blaze plan~~ **not required.** There are no functions to deploy; `firestore.rules` is the
+   enforcement layer (Amendment 3). Tasks 12-16 are therefore not executed as written — their
+   logic was moved into the rules and the client.
+2. **Android app registered** as `stream.z`, with both SHA-1s added, and Google enabled as a
+   sign-in provider. Confirmed: `android/app/google-services.json` now carries `oauth_client`
+   entries (`client_type` 1 and 3). The earlier file predated SHA-1 registration and had an
+   empty array, which is the classic "everything is configured but sign-in fails" cause.
+3. **OAuth web client ID wired.** It is the `client_type: 3` entry in that same file —
+   `283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com` — and
+   `src/config/env.ts` defaults to it, with `EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID` as an override.
+   It is a public identifier, not a secret, and StreamZ Admin ships the same value.
+4. **Support contacts** are set once in `src/config/brand.ts`: `Mirmajid@proton.me` and
+   Telegram `@Mirmajid01`.
 
-Support contacts are already fixed in the plan: `Mirmajid@proton.me` and Telegram `@Mirmajid01`, both read only from `src/config/brand.ts`.
+Still to do, in order:
+
+5. **Create the Firestore database** in production mode, nearest region. Never enable test
+   rules — the real ones are in `firestore.rules`.
+6. **Deploy the rules and indexes** (this is the whole backend):
+   `npx -y firebase-tools@latest deploy --only firestore:rules,firestore:indexes --project streamz-c98b9`
+7. **Create `config/app`** in the console with exactly these fields, or the gate falls back to
+   compiled defaults and **installation rotation is refused** (the rules read the ceiling from
+   this document):
+   ```
+   offlineGraceMinutes: 1440   keyDurationDays: 30   maxInstallationRotations: 5
+   staleSessionMinutes: 10     minAppVersion: "0.0.0"
+   ```
+8. **Give yourself an admin role claim**: Authentication → Users → your account → *Manage user
+   additional attributes* → `{ "role": "admin" }`. This is the only way to grant it — clients
+   cannot set custom claims, which is exactly why the rules can trust a phone that has one.
+   StreamZ Admin signs in, reads the claim, and signs straight out with "Access denied" if it
+   is missing.
+9. **Mint the first batch from StreamZ Admin** (item 10 decided on 2026-10-03: 10 keys, 30
+   days). The plaintext is shown once on the reveal screen and is never recoverable afterwards;
+   store it in a password manager, not in the repo. Each key's Firestore document id is the
+   SHA-256 of that plaintext.
+10. **Restrict the mobile API key** in Google Cloud → APIs and services → Credentials: Android
+    apps, package `stream.z` plus the SHA-1s.
+11. **Provision your own TMDB v4 key** in a local `.env`
+    (`EXPO_PUBLIC_TMDB_API_KEY`, see `.env.example`; `.env` is gitignored so CI has no it). The
+    key committed in upstream `build-ios.yml` belongs to the original author and is already
+    public in his history — do not use it. This project will not debug why streams do or do not
+    play (spec Amendment 2); metadata alone needs this key.
+12. **Source availability is a release step, not a repo setting.** The fork may stay private
+    while you develop; the moment you hand someone the APK you owe them the corresponding
+    source, the unchanged `LICENSE`, and the attribution. `CHANGES.md` is the change record the
+    licence requires, and Settings → About carries the credit and the source link.
+
 
 ---
 
