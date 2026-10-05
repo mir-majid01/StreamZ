@@ -175,8 +175,8 @@ export const SettingsScreen = () => {
           />
           <MenuRow
             icon={Heart}
-            label="Credits"
-            value="Attributions for TMDB, Wyzie & more"
+            label="About"
+            value="Credits, licence, privacy and support"
             onPress={() => navigation.navigate('Credits')}
           />
         </VStack>

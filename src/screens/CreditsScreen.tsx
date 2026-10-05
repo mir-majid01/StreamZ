@@ -1,8 +1,14 @@
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { Linking } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowLeft, ExternalLink } from 'lucide-react-native';
+import {
+  ArrowLeft,
+  AtSign,
+  ExternalLink,
+  Mail,
+  Shield,
+} from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
 import { VStack } from '@/components/ui/vstack';
 import { HStack } from '@/components/ui/hstack';
@@ -11,7 +17,8 @@ import { Icon } from '@/components/ui/icon';
 import { Text } from '@/components/ui/text';
 import { ScrollView } from '@/components/ui/scroll-view';
 import { Focusable } from '@/src/components/Focusable';
-import { updateService } from '@/src/services/UpdateService';
+import { BRAND, LEGAL } from '@/src/config/brand';
+import { getAppVersion } from '@/src/utils/appVersion';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 
 interface Credit {
@@ -57,10 +64,14 @@ const CREDITS: Credit[] = [
     url: 'https://lucide.dev',
   },
   {
-    name: 'Developer',
-    description:
-      'Sheeshcake (Wendale Dy) - Maintainer & Developer',
-    url: 'https://github.com/sheeshcake/Flickv4',
+    name: 'Original developer',
+    description: `${LEGAL.upstreamAuthor} — created ${LEGAL.upstreamName}, the codebase this app was built from. ${LEGAL.license}.`,
+    url: LEGAL.upstreamUrl,
+  },
+  {
+    name: LEGAL.sampleTitle,
+    description: `${LEGAL.sampleCredit}. The sample clip offered in the player so a new install can test playback without a stream source.`,
+    url: 'https://www.blender.org/open-requires',
   },
 ];
 
@@ -86,15 +97,15 @@ export const CreditsScreen = () => {
           <Icon as={ArrowLeft} size="xl" className="text-foreground" />
         </Focusable>
         <Heading size="xl" bold className="text-foreground">
-          Credits
+          About
         </Heading>
       </HStack>
 
       <ScrollView className="flex-1 px-4">
         <VStack space="lg" className="pb-10">
           <Text size="sm" className="text-muted-foreground">
-            Flick v{updateService.getCurrentVersion()} is built on the work of
-            these projects and services.
+            {BRAND.name} v{getAppVersion()} is built on the work of these
+            projects and services.
           </Text>
 
           <VStack space="md">
@@ -125,8 +136,105 @@ export const CreditsScreen = () => {
               </Focusable>
             ))}
           </VStack>
+
+          <Panel
+            icon={Shield}
+            title="License and source"
+            body={`${LEGAL.attributionLine} ${BRAND.name} is distributed under the same licence, and the complete source of the version you are running is available to anyone you give the app to.`}
+            actionLabel="View the source"
+            onAction={() => open(LEGAL.sourceUrl)}
+          />
+
+          <Panel
+            icon={Shield}
+            title="What this app stores"
+            body="Signing in keeps your Google account name, email and photo in Firebase so your subscription can be tied to you. Activation stores a one-way hash of your key, never the key itself, plus an installation identifier this device generates at random. While you watch, the app records which title you played, for how long, and the app version, so the operator can see what is being watched. Google Analytics receives app usage events. No advertising identifier is collected, and no contacts, location, photos or microphone access are used for analytics."
+          />
+
+          <Panel
+            icon={Mail}
+            title="Get help"
+            body={`Subscription problems, account requests and removal notices are handled here. Include the email you signed in with, and the app version above.`}
+          >
+            <LinkRow
+              icon={Mail}
+              label={BRAND.supportEmail}
+              onPress={() => open(`mailto:${BRAND.supportEmail}`)}
+            />
+            <LinkRow
+              icon={AtSign}
+              label={BRAND.supportTelegram}
+              onPress={() => open(BRAND.supportTelegramUrl)}
+            />
+          </Panel>
         </VStack>
       </ScrollView>
     </Box>
   );
 };
+
+const Panel = ({
+  icon,
+  title,
+  body,
+  actionLabel,
+  onAction,
+  children,
+}: {
+  icon: typeof Mail;
+  title: string;
+  body: string;
+  actionLabel?: string;
+  onAction?: () => void;
+  children?: ReactNode;
+}) => (
+  <Box className="rounded-lg bg-card p-4">
+    <HStack className="items-center space-x-2">
+      <Icon as={icon} size="sm" className="text-foreground" />
+      <Heading size="sm" className="text-foreground">
+        {title}
+      </Heading>
+    </HStack>
+    <Text size="sm" className="mt-2 text-muted-foreground">
+      {body}
+    </Text>
+    {children}
+    {actionLabel && onAction ? (
+      <Focusable
+        onPress={onAction}
+        className="mt-2 self-start rounded"
+        focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+      >
+        <HStack className="items-center space-x-1">
+          <Text size="sm" className="text-primary">
+            {actionLabel}
+          </Text>
+          <Icon as={ExternalLink} size="xs" className="text-primary" />
+        </HStack>
+      </Focusable>
+    ) : null}
+  </Box>
+);
+
+const LinkRow = ({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: typeof Mail;
+  label: string;
+  onPress: () => void;
+}) => (
+  <Focusable
+    onPress={onPress}
+    className="mt-2 rounded"
+    focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+  >
+    <HStack className="items-center space-x-2">
+      <Icon as={icon} size="sm" className="text-muted-foreground" />
+      <Text size="sm" className="text-foreground">
+        {label}
+      </Text>
+    </HStack>
+  </Focusable>
+);

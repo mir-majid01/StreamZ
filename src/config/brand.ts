@@ -18,6 +18,8 @@ export const LEGAL = {
     'This project is based on Flickv4 by Wendale Franz Dy ' +
     '(https://github.com/sheeshcake/Flickv4), licensed under GPL-3.0. ' +
     'Modifications made by Mir Majid beginning 2026-10-03.',
+  // Where recipients of the APK can get the corresponding source (GPL-3.0 §6).
+  sourceUrl: 'https://github.com/editsu4k-coder/StreamZ',
   sampleTitle: 'Sintel',
   sampleCredit: 'Sintel (c) Blender Foundation, CC-BY 3.0',
   sampleUrl: 'https://media.w3.org/2010/05/sintel/trailer.mp4',
