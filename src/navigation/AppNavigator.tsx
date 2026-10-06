@@ -29,6 +29,7 @@ import { PartyLinkHandler } from '@/src/components/party/PartyLinkHandler';
 import { PartySessionBar } from '@/src/components/party/PartySessionBar';
 import { isTVLayout } from '@/src/utils/tv';
 import { isTablet } from '@/src/utils/responsive';
+import { BACKGROUND, BORDER_COLOR, BRAND_COLOR, TEXT_COLOR } from '@/src/theme/tokens';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -46,11 +47,11 @@ const navTheme = {
   ...DarkTheme,
   colors: {
     ...DarkTheme.colors,
-    background: '#000000',
-    card: '#000000',
-    primary: '#E50914',
-    text: '#FFFFFF',
-    border: '#1f1f1f',
+    background: BACKGROUND.base,
+    card: BACKGROUND.base,
+    primary: BRAND_COLOR.primary,
+    text: TEXT_COLOR.primary,
+    border: BORDER_COLOR.subtle,
   },
 };
 

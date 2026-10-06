@@ -6,7 +6,7 @@
     "orientation": "default",
     "icon": "./assets/applogo/ic_launcher.png",
     "userInterfaceStyle": "dark",
-    "backgroundColor": "#000000",
+    "backgroundColor": "#050505",
     "scheme": "streamz",
     "ios": {
       "supportsTablet": true,
@@ -23,7 +23,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#000000",
+        "backgroundColor": "#050505",
         "foregroundImage": "./assets/applogo/ic_launcher_foreground.png",
         "backgroundImage": "./assets/applogo/ic_launcher_background.png",
         "monochromeImage": "./assets/applogo/ic_launcher_monochrome.png"

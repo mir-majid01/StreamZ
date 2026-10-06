@@ -16,6 +16,7 @@ import { SettingsScreen } from '@/src/screens/SettingsScreen';
 import { DownloadsScreen } from '@/src/screens/DownloadsScreen';
 import { LiveTvScreen } from '@/src/screens/LiveTvScreen';
 import { LIVE_TV_CONFIG } from '@/src/config/env';
+import { BACKGROUND, BORDER_COLOR, BRAND_COLOR, TEXT_COLOR } from '@/src/theme/tokens';
 
 export type MainTabParamList = {
   Home: undefined;
@@ -38,11 +39,11 @@ export const TabNavigator = () => {
       )}
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#E50914',
-        tabBarInactiveTintColor: '#8c8c8c',
+        tabBarActiveTintColor: BRAND_COLOR.primary,
+        tabBarInactiveTintColor: TEXT_COLOR.tertiary,
         tabBarStyle: {
-          backgroundColor: '#000000',
-          borderTopColor: '#1f1f1f',
+          backgroundColor: BACKGROUND.raised,
+          borderTopColor: BORDER_COLOR.subtle,
           borderTopWidth: 1,
         },
       }}

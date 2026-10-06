@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
+import { useFonts } from 'expo-font';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
@@ -29,7 +30,27 @@ import '@/global.css';
 
 mark('app-module-evaluated');
 
+// Type-scale families (src/theme/tokens.ts FONT). Loaded at the root so no
+// screen can paint with the fallback system face flickering underneath.
+const FONTS = {
+  'SpaceGrotesk-400': require('./assets/fonts/SpaceGrotesk-400.ttf'),
+  'SpaceGrotesk-500': require('./assets/fonts/SpaceGrotesk-500.ttf'),
+  'SpaceGrotesk-600': require('./assets/fonts/SpaceGrotesk-600.ttf'),
+  'SpaceGrotesk-700': require('./assets/fonts/SpaceGrotesk-700.ttf'),
+  'Inter-400': require('./assets/fonts/Inter-400.ttf'),
+  'Inter-500': require('./assets/fonts/Inter-500.ttf'),
+  'Inter-600': require('./assets/fonts/Inter-600.ttf'),
+  'Inter-700': require('./assets/fonts/Inter-700.ttf'),
+  'Inter-800': require('./assets/fonts/Inter-800.ttf'),
+};
+
 export default function App() {
+  const [fontsLoaded] = useFonts(FONTS);
+
+  useEffect(() => {
+    if (fontsLoaded) mark('fonts-loaded');
+  }, [fontsLoaded]);
+
   useEffect(() => {
     mark('first-react-commit');
     lockPortrait();
@@ -39,6 +60,11 @@ export default function App() {
     // if permission was denied.
     void bootstrapDownloadPermissions();
   }, []);
+
+  // Local TTFs decode in tens of milliseconds; holding the (black) native
+  // window for that beat is invisible, while rendering text before the fonts
+  // land would flash the wrong face under every provider.
+  if (!fontsLoaded) return null;
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
