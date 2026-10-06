@@ -36,6 +36,10 @@ export async function signInWithGoogle(): Promise<SignInOutcome> {
   } catch (e) {
     const code = (e as { code?: number | string })?.code;
     if (code === statusCodes.SIGN_IN_CANCELLED || code === 'cancel') return { kind: 'cancelled' };
+    // Users get friendly copy, developers get the number. Google's numeric status codes
+    // (10 = DEVELOPER_ERROR, 2 = timeout, 12500 series) are the only way to tell a
+    // mis-registered SHA-1 apart from a cancelled prompt, and they arrive here as numbers.
+    console.warn('[auth] Google sign-in failed', code, (e as { message?: string })?.message);
     return {
       kind: 'error',
       message: describeAuthError(typeof code === 'string' ? code : 'unknown'),
