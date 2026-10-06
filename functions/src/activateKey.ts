@@ -1,5 +1,5 @@
 import { onCall } from 'firebase-functions/v2/https';
-import type { CallRequest } from 'firebase-functions/v2/https';
+import type { CallableRequest } from 'firebase-functions/v2/https';
 import { db, ensureConfig, readConfig, requireAuth, requireInstallationId, audit } from './admin';
 import { hashKey, normalizeKeyBody } from './keys';
 
@@ -22,7 +22,7 @@ export interface ActivateResponse {
  * what makes two devices racing for the same unused key resolve to exactly one winner.
  * Nothing here trusts a client assertion about ownership or expiry.
  */
-export const activateKey = onCall(async (req: CallRequest): Promise<ActivateResponse> => {
+export const activateKey = onCall(async (req: CallableRequest): Promise<ActivateResponse> => {
   const uid = requireAuth(req.auth);
   const installationId = requireInstallationId(req.data);
   const body = normalizeKeyBody(req.data?.key);
@@ -39,8 +39,9 @@ export const activateKey = onCall(async (req: CallRequest): Promise<ActivateResp
     );
     if (found.empty) return { code: 'NOT_FOUND', expiresAt: null } as ActivateResponse;
 
-    const keyRef = found.docs[0];
-    const key = keyRef.data();
+    const keySnap = found.docs[0];
+    const keyRef = keySnap.ref;
+    const key = keySnap.data();
     const now = Date.now();
 
     if (key.status === 'REVOKED') return { code: 'REVOKED', expiresAt: null } as ActivateResponse;

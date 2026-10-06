@@ -1,5 +1,5 @@
 import { onCall } from 'firebase-functions/v2/https';
-import type { CallRequest } from 'firebase-functions/v2/https';
+import type { CallableRequest } from 'firebase-functions/v2/https';
 import { WriteBatch } from 'firebase-admin/firestore';
 import { audit, authAdmin, db, ensureConfig, readConfig, requireRole } from './admin';
 import { formatKey, hashKey, randomKeyBody } from './keys';
@@ -13,7 +13,7 @@ const MAX_KEYS_PER_CALL = 500;
  * recovered later — the admin revokes and reissues. That is the deliberate cost of not
  * keeping a stealable key table.
  */
-export const generateKeys = onCall(async (req: CallRequest) => {
+export const generateKeys = onCall(async (req: CallableRequest) => {
   const actor = requireRole(req.auth, ADMIN_ROLES);
   await ensureConfig();
   const config = await readConfig();
@@ -49,7 +49,7 @@ export const generateKeys = onCall(async (req: CallRequest) => {
   return { keys: created, durationDays };
 });
 
-export const revokeKey = onCall(async (req: CallRequest) => {
+export const revokeKey = onCall(async (req: CallableRequest) => {
   const actor = requireRole(req.auth, ADMIN_ROLES);
   const keyId = String(req.data?.keyId ?? '');
   if (!keyId) throw new Error('keyId is required');
@@ -71,7 +71,7 @@ export const revokeKey = onCall(async (req: CallRequest) => {
 });
 
 /** The only writer of roles anywhere in the system. A client can never set its own. */
-export const setAdminRole = onCall(async (req: CallRequest) => {
+export const setAdminRole = onCall(async (req: CallableRequest) => {
   const actor = requireRole(req.auth, ['admin']);
   const targetUid = String(req.data?.uid ?? '');
   const role = req.data?.role;

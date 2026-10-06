@@ -20,6 +20,7 @@ import {
   runTransaction,
   setDoc,
   updateDoc,
+  type Transaction,
 } from 'firebase/firestore';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -28,16 +29,6 @@ const PROJECT_ID = 'streamz-rules-test';
 const ALICE = 'uid-alice';
 const BOB = 'uid-bob';
 const ALICE_EMAIL = 'alice@example.com';
-// Structural type for the transaction handle. The root tsconfig resolves
-// `firebase/firestore` through the React Native field and cannot see the modular exports
-// map, so importing the real Transaction type would fail typecheck even though this suite
-// runs correctly under Jest + babel (jest.emulator.config.js).
-type TxSnapshot = { exists(): boolean; data(): Record<string, unknown> | undefined };
-type TxHandle = {
-  get: (ref: unknown) => Promise<TxSnapshot>;
-  set: (ref: unknown, data: unknown, options?: { merge?: boolean }) => unknown;
-  update: (ref: unknown, data: Record<string, unknown>) => unknown;
-};
 
 const DAY = 86_400_000;
 
@@ -220,7 +211,7 @@ describe('activating a key', () => {
     installationId: string,
     now = Date.now(),
   ) =>
-    runTransaction(db, async (tx: TxHandle) => {
+    runTransaction(db, async (tx: Transaction) => {
       const key = await tx.get(doc(db, 'subscriptionKeys', keyId));
       const user = await tx.get(doc(db, 'users', uid));
       const durationDays = key.data()!.durationDays as number;
@@ -277,7 +268,7 @@ describe('activating a key', () => {
 
   it('refuses more time than the key grants', async () => {
     await expect(
-      runTransaction(alice(), async (tx: TxHandle) => {
+      runTransaction(alice(), async (tx: Transaction) => {
         const key = await tx.get(doc(alice(), 'subscriptionKeys', HASH_A));
         const now = Date.now();
         tx.set(

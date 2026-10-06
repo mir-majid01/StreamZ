@@ -62,7 +62,7 @@ export const finalizeStaleSessions = onSchedule('every 5 minutes', async () => {
     .limit(200)
     .get();
 
-  if (stale.empty) return { finalized: 0 };
+  if (stale.empty) return;
 
   await Promise.all(
     stale.docs.map(async (snap) => {
@@ -81,5 +81,4 @@ export const finalizeStaleSessions = onSchedule('every 5 minutes', async () => {
       );
     }),
   );
-  return { finalized: stale.size };
 });

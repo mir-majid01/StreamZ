@@ -1,7 +1,7 @@
 import { setGlobalOptions } from 'firebase-functions/v2';
-import { initialize } from 'firebase-admin';
+import { initializeApp } from 'firebase-admin/app';
 
-initialize();
+initializeApp();
 setGlobalOptions({ region: 'us-central1', maxInstances: 10 });
 
 export { validateAccess } from './validateAccess';

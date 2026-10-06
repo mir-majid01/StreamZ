@@ -1,5 +1,5 @@
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
-import type { CallRequest } from 'firebase-functions/v2/https';
+import { onCall } from 'firebase-functions/v2/https';
+import type { CallableRequest } from 'firebase-functions/v2/https';
 import {
   appVersionOf,
   audit,
@@ -38,7 +38,7 @@ const ok = (serverTimeMs: number): AccessResponse => ({
  * The only routine call the app makes. Every timestamp is produced here: the client's
  * clock appears nowhere, which is what makes a locally edited expiry meaningless.
  */
-export const validateAccess = onCall(async (req: CallRequest): Promise<AccessResponse> => {
+export const validateAccess = onCall(async (req: CallableRequest): Promise<AccessResponse> => {
   const uid = requireAuth(req.auth);
   const installationId = requireInstallationId(req.data);
   const now = Date.now();
