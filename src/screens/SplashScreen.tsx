@@ -17,6 +17,7 @@ import { useHomeData } from '@/src/hooks/useHomeData';
 import { useCatalogRegion } from '@/src/hooks/useCatalogRegion';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 import type { RootStackScreenProps } from '@/src/navigation/types';
+import { mark } from '@/src/utils/startupTiming';
 import {
   updateService,
   type UpdateInfo,
@@ -51,6 +52,7 @@ const checkUpdatesSafe = async (): Promise<UpdateInfo | null> => {
 export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => {
   const { width: windowWidth } = useWindowDimensions();
   const { width: logoWidth, height: logoHeight } = splashLogoSize(windowWidth);
+  mark('splash-mounted');
   const [messageIndex, setMessageIndex] = useState(() =>
     Math.floor(Math.random() * Math.max(MESSAGES.length, 1)),
   );
@@ -76,6 +78,7 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
     if (didNavigateRef.current) return;
     didNavigateRef.current = true;
     const target = gateRef.current.route;
+    mark(`splash-exit:${target}`);
     if (target === 'Main') {
       // Home data is only fetched once the gate has actually let the user in.
       void Promise.resolve(bootFnsRef.current.prefetch()).catch(() => undefined);
@@ -142,6 +145,7 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   }, [showCopy]);
 
   useEffect(() => {
+    if (gateDecision !== 'bootstrapping') mark(`gate-decision:${gateRoute}`);
     maybeExitRef.current();
   }, [gateDecision]);
 

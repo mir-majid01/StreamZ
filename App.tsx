@@ -24,10 +24,14 @@ import { UpdateChecker } from '@/src/components/UpdateChecker';
 import { UPDATE_CONFIG } from '@/src/config/env';
 import { lockPortrait } from '@/src/utils/orientation';
 import { bootstrapDownloadPermissions } from '@/src/utils/downloadPermissions';
+import { mark } from '@/src/utils/startupTiming';
 import '@/global.css';
+
+mark('app-module-evaluated');
 
 export default function App() {
   useEffect(() => {
+    mark('first-react-commit');
     lockPortrait();
     // Ask for notification permission once, on the very first launch, so
     // downloads can surface progress notifications without silently failing.
