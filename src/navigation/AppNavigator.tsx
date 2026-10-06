@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   NavigationContainer,
   DarkTheme,
@@ -30,10 +30,46 @@ import { PartySessionBar } from '@/src/components/party/PartySessionBar';
 import { isTVLayout } from '@/src/utils/tv';
 import { isTablet } from '@/src/utils/responsive';
 import { BACKGROUND, BORDER_COLOR, BRAND_COLOR, TEXT_COLOR } from '@/src/theme/tokens';
+import { useSession } from '@/src/firebase/auth/SessionProvider';
 import type { RootStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const navigationRef = createNavigationContainerRef<RootStackParamList>();
+
+const GATE_ROUTES = ['Splash', 'Login', 'Subscription', 'Blocked'] as const;
+
+/**
+ * Keeps the stack honest against the session gate (PRD §34). Splash performs the
+ * first handoff; from then on, whenever the gate's route changes — sign-in, key
+ * activation, a live revocation while the app is open — the stack follows. A
+ * negative verdict ejects to Blocked from anywhere; nothing may bypass the gate,
+ * and no screen navigates itself.
+ */
+const GateSync = () => {
+  const { route: sessionRoute, decision } = useSession();
+  const prevRoute = useRef(sessionRoute);
+
+  useEffect(() => {
+    if (decision === 'bootstrapping') return;
+    if (!navigationRef.isReady()) return;
+    if (prevRoute.current === sessionRoute) return;
+    prevRoute.current = sessionRoute;
+
+    const current = navigationRef.getCurrentRoute()?.name;
+    // Splash owns the initial handoff; never race it.
+    if (!current || current === 'Splash') return;
+
+    if (sessionRoute === 'Blocked') {
+      navigationRef.reset({ index: 0, routes: [{ name: 'Blocked' }] });
+      return;
+    }
+    if (GATE_ROUTES.includes(current as (typeof GATE_ROUTES)[number]) && current !== sessionRoute) {
+      navigationRef.reset({ index: 0, routes: [{ name: sessionRoute }] });
+    }
+  }, [sessionRoute, decision]);
+
+  return null;
+};
 
 // Phones are locked to portrait everywhere; only the Player screen may rotate
 // to landscape. Tablets, TVs, and Mac Catalyst windows are free to rotate
@@ -70,6 +106,7 @@ export const AppNavigator = () => {
       onStateChange={syncRoute}
     >
       <PartyLinkHandler />
+      <GateSync />
       <PartySessionBar routeName={routeName} />
       <Stack.Navigator
         initialRouteName="Splash"
