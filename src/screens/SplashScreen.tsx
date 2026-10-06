@@ -47,7 +47,9 @@ const checkUpdatesSafe = async (): Promise<UpdateInfo | null> => {
 export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => {
   const { width: windowWidth } = useWindowDimensions();
   const { width: logoWidth, height: logoHeight } = splashLogoSize(windowWidth);
-  mark('splash-mounted');
+  useEffect(() => {
+    mark('splash-mounted');
+  }, []);
   const [showCopy, setShowCopy] = useState(false);
   const { refreshBuiltInServers } = useServers();
   const { prefetch } = useHomeData();

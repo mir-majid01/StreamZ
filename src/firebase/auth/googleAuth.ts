@@ -19,6 +19,10 @@ export function configureGoogleSignIn(): void {
 
 export async function signInWithGoogle(): Promise<SignInOutcome> {
   try {
+    // Configure is idempotent and cheap; doing it here (not in a screen effect)
+    // means the client can never reach the API unconfigured — the exact failure
+    // the device test caught ("apiClient is null - call configure() first").
+    configureGoogleSignIn();
     if (!(await GoogleSignin.hasPlayServices())) {
       return {
         kind: 'error',
