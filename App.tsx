@@ -22,6 +22,7 @@ import { DownloadsProvider } from '@/src/hooks/useDownloads';
 import { WatchPartyProvider } from '@/src/hooks/useWatchParty';
 import { DownloadResolverHost } from '@/src/components/DownloadResolverHost';
 import { UpdateChecker } from '@/src/components/UpdateChecker';
+import { StreamZErrorBoundary } from '@/src/components/StreamZErrorBoundary';
 import { UPDATE_CONFIG } from '@/src/config/env';
 import { lockPortrait } from '@/src/utils/orientation';
 import { bootstrapDownloadPermissions } from '@/src/utils/downloadPermissions';
@@ -85,7 +86,9 @@ export default function App() {
                                 <DownloadsProvider>
                                   <WatchPartyProvider>
                                     <StatusBar style="light" />
-                                    <AppNavigator />
+                                    <StreamZErrorBoundary>
+                                      <AppNavigator />
+                                    </StreamZErrorBoundary>
                                     <DownloadResolverHost />
                                     {UPDATE_CONFIG.enabled ? <UpdateChecker /> : null}
                                   </WatchPartyProvider>

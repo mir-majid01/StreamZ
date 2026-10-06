@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, useWindowDimensions } from 'react-native';
+import { useWindowDimensions } from 'react-native';
 import { Box } from '@/components/ui/box';
-import { Text } from '@/components/ui/text';
 import { VStack } from '@/components/ui/vstack';
 import { UpdateModal } from '@/src/components/UpdateModal';
+import { StreamZLoader, StreamZText, StreamZAmbient } from '@/src/components/streamz';
 import {
   StreamZSplashWordmark,
   TOTAL_MS,
-  WORD_REVEAL_MS,
+  LOGO_SETTLE_MS,
   splashLogoSize,
 } from '@/src/components/splash/StreamZSplashWordmark';
-import loadingMessages from '@/src/constants/loadingMessages.json';
 import { UPDATE_CONFIG } from '@/src/config/env';
 import { useServers } from '@/src/hooks/useServers';
 import { useHomeData } from '@/src/hooks/useHomeData';
@@ -29,10 +28,6 @@ import {
   setSkippedVersion,
 } from '@/src/utils/updateCheckStorage';
 
-const MESSAGES: string[] = Array.isArray(loadingMessages)
-  ? loadingMessages
-  : Object.values(loadingMessages as Record<string, string>);
-const MESSAGE_INTERVAL = 1000;
 const LAND_MS = 200;
 
 /**
@@ -53,9 +48,6 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   const { width: windowWidth } = useWindowDimensions();
   const { width: logoWidth, height: logoHeight } = splashLogoSize(windowWidth);
   mark('splash-mounted');
-  const [messageIndex, setMessageIndex] = useState(() =>
-    Math.floor(Math.random() * Math.max(MESSAGES.length, 1)),
-  );
   const [showCopy, setShowCopy] = useState(false);
   const { refreshBuiltInServers } = useServers();
   const { prefetch } = useHomeData();
@@ -128,21 +120,13 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   }, [updateInfo, finishBoot]);
 
   useEffect(() => {
-    const reveal = setTimeout(() => setShowCopy(true), WORD_REVEAL_MS);
+    const reveal = setTimeout(() => setShowCopy(true), LOGO_SETTLE_MS);
     const fallback = setTimeout(() => markDrawDoneRef.current(), TOTAL_MS + 80);
     return () => {
       clearTimeout(reveal);
       clearTimeout(fallback);
     };
   }, []);
-
-  useEffect(() => {
-    if (!showCopy || MESSAGES.length < 2) return;
-    const id = setInterval(() => {
-      setMessageIndex((i) => (i + 1) % MESSAGES.length);
-    }, MESSAGE_INTERVAL);
-    return () => clearInterval(id);
-  }, [showCopy]);
 
   useEffect(() => {
     if (gateDecision !== 'bootstrapping') mark(`gate-decision:${gateRoute}`);
@@ -189,10 +173,21 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
     [],
   );
 
-  const message = MESSAGES[messageIndex] ?? MESSAGES[0] ?? '';
+  // Status copy is keyed to the REAL gate state (PRD §4): it may never promise
+  // anything the session layer has not actually decided, and technical stages
+  // (firebase module, firestore fetch) are never named.
+  const statusMessage =
+    gateDecision === 'needsServerContact'
+      ? 'Connecting…'
+      : gateDecision === 'bootstrapping'
+        ? 'Securing your session…'
+        : 'Preparing StreamZ';
 
   return (
     <Box className="flex-1 bg-background">
+      <Box className="absolute inset-0" pointerEvents="none">
+        <StreamZAmbient />
+      </Box>
       <Box
         className="absolute inset-0 items-center justify-center overflow-visible"
         pointerEvents="none"
@@ -206,16 +201,13 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         pointerEvents="none"
       >
         <Box style={{ width: logoWidth, height: logoHeight + 20 }} />
-        <ActivityIndicator
-          size="large"
-          color="#E50914"
-          className="mt-20"
-          style={{ opacity: showCopy ? 1 : 0 }}
-        />
+        <Box className="mt-20" style={{ opacity: showCopy ? 1 : 0 }}>
+          <StreamZLoader />
+        </Box>
         <Box className="min-h-10 px-8" style={{ opacity: showCopy ? 1 : 0 }}>
-          <Text key={messageIndex} size="xs" className="text-center text-muted-foreground">
-            {message}
-          </Text>
+          <StreamZText variant="secondary" className="text-center text-muted-foreground">
+            {statusMessage}
+          </StreamZText>
         </Box>
       </VStack>
       <UpdateModal

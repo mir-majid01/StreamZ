@@ -57,10 +57,12 @@ export const StreamZButton = ({
       {...props}
     >
       {loading ? (
-        <ActivityIndicator
-          size="small"
-          color={variant === 'google' ? '#1F1F1F' : '#FFFFFF'}
-        />
+        <>
+          <ActivityIndicator size="small" color={variant === 'google' ? '#1F1F1F' : '#FFFFFF'} />
+          <StreamZText variant="button" className={`${LABEL_COLOR[variant]} ml-3`}>
+            {label}
+          </StreamZText>
+        </>
       ) : (
         <>
           {icon}

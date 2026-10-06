@@ -8,4 +8,5 @@ export { StreamZSkeleton, StreamZSkeletonRow } from './StreamZSkeleton';
 export { StreamZLoader } from './StreamZLoader';
 export { StreamZStateView, StreamZErrorState, StreamZEmptyState } from './StreamZStateViews';
 export { StreamZLogo, StreamZZMark } from './StreamZLogo';
+export { StreamZAmbient } from './StreamZAmbient';
 export { GoogleG } from './GoogleG';
