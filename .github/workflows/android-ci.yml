@@ -6,9 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: android-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  apk:
+    name: Build APK
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -22,7 +28,48 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
+
+      - name: Install JS dependencies
+        run: npm ci
+
+      # The committed android/gradle.properties caps the JVM heap at what this
+      # project's 3.9 GB dev machine can spare; the runner has room for more and
+      # D8 needs it to finish the release bundle.
+      - name: Assemble debug + release APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug assembleRelease \
+            --no-daemon --stacktrace \
+            -Dorg.gradle.jvmargs=-Xmx3072m \
+            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamz-release-${{ github.run_number }}
+          path: android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 7
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamz-debug-${{ github.run_number }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+          if-no-files-found: error
+
+  verify:
+    name: Tests and typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
 
       - name: Install JS dependencies
         run: npm ci
@@ -36,13 +83,3 @@ jobs:
       - name: Typecheck Cloud Functions
         working-directory: functions
         run: npm ci && npx tsc --noEmit
-
-      - name: Build debug APK
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: streamz-debug-${{ github.run_number }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          retention-days: 7
