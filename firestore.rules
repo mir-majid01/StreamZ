@@ -123,10 +123,16 @@ service cloud.firestore {
         // write it could promote itself, and these rules are the only thing standing
         // between a phone and the admin console.
         isOwner(uid)
-        && resource.data.uid == uid
+        // Staff accounts are seeded by hand with only createdAt/status/role/email, so the
+        // identity fields this branch reasons about can be absent. Reading an absent
+        // property is an evaluation error, which denies the activation outright — and
+        // isOwner plus the uid equality below pin the value this write may carry.
+        && (!('uid' in resource.data) || resource.data.uid == uid)
         && request.resource.data.uid == uid
+        // `uid` is listed because a hand-made document gains it on first activation; a
+        // document that already has it leaves it untouched and out of the diff.
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'status', 'subscriptionId', 'installationId', 'activatedAt', 'expiresAt',
+          'uid', 'status', 'subscriptionId', 'installationId', 'activatedAt', 'expiresAt',
           'lastLoginAt', 'lastActiveAt', 'appVersion', 'installationRotations'
         ])
         // The counter only ever steps by one, and only when the installation changed, so a
@@ -134,7 +140,8 @@ service cloud.firestore {
         && rotationsOf(request.resource.data) >= rotationsOf(resource.data)
         && rotationsOf(request.resource.data) <= rotationCeiling()
         && (
-          request.resource.data.installationId == resource.data.installationId
+          !('installationId' in resource.data)
+          || request.resource.data.installationId == resource.data.installationId
           || rotationsOf(request.resource.data) == rotationsOf(resource.data) + 1
         )
         // The subscription a device claims must exist, be ACTIVE, and be bound to it.

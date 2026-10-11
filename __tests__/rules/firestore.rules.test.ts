@@ -223,6 +223,7 @@ describe('activating a key', () => {
       const fields = activationFields(uid, keyId, installationId, now, durationDays);
       if (user.exists()) {
         tx.update(doc(db, 'users', uid), {
+          uid: fields.uid,
           status: fields.status,
           subscriptionId: fields.subscriptionId,
           installationId: fields.installationId,
@@ -259,6 +260,27 @@ describe('activating a key', () => {
     expect(key.createdBy).toBe('owner@example.com');
     const user = await readAsAdmin(`users/${ALICE}`);
     expect(user.subscriptionId).toBe(HASH_A);
+  });
+
+  it('activates onto a staff record that was made by hand in the console', async () => {
+    // Staff accounts are seeded as a four-field record (createdAt/status/role/email) and
+    // carry none of the subscriber fields. If the activation branch only accepts a document
+    // that already looks like a subscriber, an admin's own phone cannot subscribe with a key
+    // and the refusal arrives as an opaque "activation failed".
+    await seed('users', ALICE, {
+      createdAt: Date.now() - DAY,
+      status: 'active',
+      role: 'admin',
+      email: ALICE_EMAIL,
+    });
+
+    await activateIn(alice(), ALICE, HASH_A, 'inst-alice1');
+
+    const user = await readAsAdmin(`users/${ALICE}`);
+    expect(user.subscriptionId).toBe(HASH_A);
+    expect(user.installationId).toBe('inst-alice1');
+    // Hand-made fields are not the caller's to overwrite, and the role stays where it was.
+    expect(user.role).toBe('admin');
   });
 
   it('refuses a second activation of the same key by another account', async () => {
