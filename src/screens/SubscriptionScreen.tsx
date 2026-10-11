@@ -16,9 +16,9 @@ import {
 import { BRAND } from '@/src/config/brand';
 import { THEME } from '@/src/theme/tokens';
 import { formatKeyInput, looksPlausible } from '@/src/firebase/subscriptions/keyFormat';
-import { activate, TransportError } from '@/src/firebase/subscriptions/api';
+import { activate, isRulesRefusal, TransportError } from '@/src/firebase/subscriptions/api';
 import { AppEvent, logAppEvent } from '@/src/firebase/analytics/appEvents';
-import { describeActivation } from '@/src/firebase/errors';
+import { describeActivation, describeFirestoreError } from '@/src/firebase/errors';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 
 const SUPPORT_SUBJECT = encodeURIComponent(`${BRAND.name} subscription`);
@@ -71,7 +71,11 @@ export const SubscriptionScreen = () => {
       setError(
         e instanceof TransportError
           ? "We couldn't verify your subscription. Check your connection and try again."
-          : 'Activation failed. Please try again.',
+          : isRulesRefusal(e)
+            // The rules refused the write. Retrying cannot help, and a vague message hides
+            // the one case where support can: an account the admin has suspended.
+            ? describeFirestoreError('permission-denied')
+            : 'Activation failed. Please try again.',
       );
     } finally {
       setBusy(false);

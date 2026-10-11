@@ -65,6 +65,13 @@ function errorText(e: unknown): string {
 const isRefusal = (e: unknown): boolean => /permission.denied|unauthenticated/.test(errorText(e));
 
 /**
+ * Exported so a screen can tell "the rules refused this write" apart from "the network was
+ * down". The two need different copy: a refusal will fail identically on the next attempt,
+ * while a transport error is worth retrying.
+ */
+export const isRulesRefusal = isRefusal;
+
+/**
  * `permission-denied` is a rules verdict and must surface as itself: folding it into the
  * transport bucket would hand offline grace to someone the rules just refused.
  */
