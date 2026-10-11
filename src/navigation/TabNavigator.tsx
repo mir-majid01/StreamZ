@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import {
   BottomTabBar,
   createBottomTabNavigator,
@@ -17,6 +18,7 @@ import { DownloadsScreen } from '@/src/screens/DownloadsScreen';
 import { LiveTvScreen } from '@/src/screens/LiveTvScreen';
 import { LIVE_TV_CONFIG } from '@/src/config/env';
 import { BACKGROUND, BORDER_COLOR, BRAND_COLOR, TEXT_COLOR } from '@/src/theme/tokens';
+import { mark } from '@/src/utils/startupTiming';
 
 export type MainTabParamList = {
   Home: undefined;
@@ -29,6 +31,10 @@ export type MainTabParamList = {
 const Tab = createBottomTabNavigator<MainTabParamList>();
 
 export const TabNavigator = () => {
+  useEffect(() => {
+    mark('main-mounted');
+  }, []);
+
   return (
     <Tab.Navigator
       tabBar={(props) => (

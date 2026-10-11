@@ -1,4 +1,4 @@
-import { useState, type RefObject } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { useWindowDimensions } from 'react-native';
 import { RefreshControl } from 'react-native';
 import Animated, {
@@ -29,6 +29,7 @@ import { useContinueWatching } from '@/src/hooks/useContinueWatching';
 import { useDeviceKind } from '@/src/hooks/useDeviceKind';
 import { getReleaseDate, getTitle, type MediaItem } from '@/src/types';
 import { getComingSoon } from '@/src/utils/comingSoon';
+import { mark } from '@/src/utils/startupTiming';
 import type { RootStackParamList } from '@/src/navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -62,6 +63,14 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
   // header to exit selection mode without deleting anything.
   const [cwSelecting, setCwSelecting] = useState(false);
   const [myListSelecting, setMyListSelecting] = useState(false);
+
+  // Cold-start stage 10: the first time real catalogue rows exist to render.
+  const contentMarkedRef = useRef(false);
+  useEffect(() => {
+    if (contentMarkedRef.current || rows.length === 0) return;
+    contentMarkedRef.current = true;
+    mark('home-content-ready');
+  }, [rows.length]);
 
   // Drives the sticky AppHeader's fade-in backdrop + logo shrink as the hero
   // scrolls out of view — see AppHeader's `progress` prop.

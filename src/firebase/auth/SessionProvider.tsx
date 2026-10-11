@@ -13,6 +13,7 @@ import {
   type AppConfigDoc,
 } from '@/src/firebase/models';
 import type { GateDecision } from '@/src/firebase/models';
+import { mark } from '@/src/utils/startupTiming';
 
 const CACHE_KEY = 'streamz.access.cache';
 const REVALIDATE_MS = 15 * 60_000;
@@ -59,6 +60,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [config, setConfig] = useState<AppConfigDoc>(CONFIG_DEFAULTS);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const inFlight = useRef<Promise<void> | null>(null);
+  const authMarkedRef = useRef(false);
 
   useEffect(() => {
     void disableAdvertisingId();
@@ -85,6 +87,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setLive(result);
         setLiveUid(target);
         setTransportFailed(false);
+        mark(`subscription-verdict:${result.status}`);
         if (result.status === 'authorized') {
           setLastGood(result.serverTimeMs);
           await AsyncStorage.setItem(
@@ -96,6 +99,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setNowMs(Date.now());
         if (e instanceof TransportError) {
           setTransportFailed(true);
+          mark('subscription-verdict:transport-error');
           return;
         }
         // A non-transport failure (e.g. a rejected custom claim) is a real answer that we
@@ -116,7 +120,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!ensureFirebase()) return;
+    mark('firebase-ready');
     const subscriber = onAuthStateChanged(getAuth(), (firebaseUser: User | null) => {
+      if (!authMarkedRef.current) {
+        authMarkedRef.current = true;
+        mark(firebaseUser ? 'auth-restored' : 'auth-restored:signed-out');
+      }
       const nextUid = firebaseUser?.uid ?? null;
       setUid(nextUid);
       setNowMs(Date.now());

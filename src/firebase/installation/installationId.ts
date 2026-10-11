@@ -1,5 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
 import { randomUUID } from 'expo-crypto';
+import { mark } from '@/src/utils/startupTiming';
 
 export const INSTALLATION_KEY = 'streamz.installationId';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,7 +21,10 @@ export async function getInstallationId(): Promise<string> {
   } catch {
     stored = null;
   }
-  if (stored && UUID_RE.test(stored)) return stored;
+  if (stored && UUID_RE.test(stored)) {
+    mark('installation-id:restored');
+    return stored;
+  }
 
   const next = randomUUID().toLowerCase();
   try {
@@ -28,5 +32,6 @@ export async function getInstallationId(): Promise<string> {
   } catch {
     // Non-fatal: the server still has the previous binding for this uid and will rotate it.
   }
+  mark('installation-id:created');
   return next;
 }
