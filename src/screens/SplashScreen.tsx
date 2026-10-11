@@ -28,8 +28,6 @@ import {
   setSkippedVersion,
 } from '@/src/utils/updateCheckStorage';
 
-const LAND_MS = 200;
-
 /**
  * Soft-fail update check so a network blip never blocks entering Main. Disabled entirely in
  * Phase 1A: with the defaults this polls the upstream Flick releases and would offer a
@@ -64,7 +62,6 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   const bootDoneRef = useRef(false);
   const didStartExitRef = useRef(false);
   const didNavigateRef = useRef(false);
-  const landTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bootFnsRef = useRef({ refreshBuiltInServers, prefetch });
   bootFnsRef.current = { refreshBuiltInServers, prefetch };
 
@@ -86,7 +83,7 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
     // Gate totality: never leave Splash before auth and subscription are resolved.
     if (gateRef.current.decision === 'bootstrapping') return;
     didStartExitRef.current = true;
-    landTimerRef.current = setTimeout(goMain, LAND_MS);
+    goMain();
   }, [goMain]);
   const maybeExitRef = useRef(maybeExit);
   maybeExitRef.current = maybeExit;
@@ -136,12 +133,20 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   }, [gateDecision]);
 
   useEffect(() => {
+    // Playback servers are needed for the player, not for the gate — fetch them
+    // in the background from mount (cache first, then network) so the splash
+    // never waits on a server round-trip before handing off to Login/Main.
+    void Promise.resolve(bootFnsRef.current.refreshBuiltInServers()).catch(
+      () => undefined,
+    );
+  }, []);
+
+  useEffect(() => {
     if (!regionLoaded) return;
 
     let cancelled = false;
     void (async () => {
-      const { refreshBuiltInServers: refreshServers } = bootFnsRef.current;
-      const [, info] = await Promise.all([refreshServers(), checkUpdatesSafe()]);
+      const info = await checkUpdatesSafe();
       if (cancelled) return;
 
       if (info?.hasUpdate) {
@@ -168,22 +173,15 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
     };
   }, [regionLoaded]);
 
-  useEffect(
-    () => () => {
-      if (landTimerRef.current) clearTimeout(landTimerRef.current);
-    },
-    [],
-  );
-
   // Status copy is keyed to the REAL gate state (PRD §4): it may never promise
   // anything the session layer has not actually decided, and technical stages
   // (firebase module, firestore fetch) are never named.
   const statusMessage =
-    gateDecision === 'needsServerContact'
-      ? 'Connecting…'
-      : gateDecision === 'bootstrapping'
-        ? 'Securing your session…'
-        : 'Preparing StreamZ';
+    gateDecision === 'bootstrapping'
+      ? 'Checking access…'
+      : gateDecision === 'needsServerContact'
+        ? 'Connecting…'
+        : 'Preparing StreamZ…';
 
   return (
     <Box className="flex-1 bg-background">
