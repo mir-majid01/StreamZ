@@ -15,12 +15,27 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      APP_VERSION: '0.1.0'
+      ANDROID_VERSION_CODE: '1'
     steps:
       - uses: actions/checkout@v4
 
+      # The 2026-10-08 run died with "No space left on device": RN release
+      # intermediates, Gradle caches and node_modules overflow the default
+      # runner disk when debug AND release are both built. Clear the
+      # preinstalled toolchains this project does not use, and build release
+      # only — a debug APK for Metro-based development is produced on a dev
+      # machine, the standalone test APK is release.
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost || true
+          df -h /
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - uses: actions/setup-java@v4
@@ -33,14 +48,40 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # SDK 57 inlines EXPO_PUBLIC_* into the JS bundle at build time, so the
+      # content-engine keys must exist here. They come from the same repo
+      # secrets build.yml already uses; a missing key is simply omitted and
+      # the app falls back to its documented defaults / disabled feature.
+      - name: Write .env
+        env:
+          EXPO_PUBLIC_TMDB_API_KEY: ${{ secrets.EXPO_PUBLIC_TMDB_API_KEY }}
+          EXPO_PUBLIC_TMDB_BASE_URL: ${{ secrets.EXPO_PUBLIC_TMDB_BASE_URL }}
+          EXPO_PUBLIC_TMDB_IMAGE_BASE_URL: ${{ secrets.EXPO_PUBLIC_TMDB_IMAGE_BASE_URL }}
+          EXPO_PUBLIC_WYZIE_BASE_URL: ${{ secrets.EXPO_PUBLIC_WYZIE_BASE_URL }}
+          EXPO_PUBLIC_WYZIE_API_KEY: ${{ secrets.EXPO_PUBLIC_WYZIE_API_KEY }}
+          EXPO_PUBLIC_WATCH_PARTY_URL: ${{ secrets.EXPO_PUBLIC_WATCH_PARTY_URL }}
+        run: |
+          umask 077
+          {
+            printf 'APP_VERSION=%s\n' "$APP_VERSION"
+            printf 'ANDROID_VERSION_CODE=%s\n' "$ANDROID_VERSION_CODE"
+            printf 'EXPO_PUBLIC_TMDB_BASE_URL=%s\n' "${EXPO_PUBLIC_TMDB_BASE_URL:-https://api.themoviedb.org/3}"
+            printf 'EXPO_PUBLIC_TMDB_IMAGE_BASE_URL=%s\n' "${EXPO_PUBLIC_TMDB_IMAGE_BASE_URL:-https://image.tmdb.org/t/p/w500}"
+            printf 'EXPO_PUBLIC_WYZIE_BASE_URL=%s\n' "${EXPO_PUBLIC_WYZIE_BASE_URL:-https://sub.wyzie.io}"
+            for k in EXPO_PUBLIC_TMDB_API_KEY EXPO_PUBLIC_WYZIE_API_KEY EXPO_PUBLIC_WATCH_PARTY_URL; do
+              eval "v=\${$k}"
+              if [ -n "$v" ]; then printf '%s=%s\n' "$k" "$v"; fi
+            done
+          } > .env
+
       # The committed android/gradle.properties caps the JVM heap at what this
       # project's 3.9 GB dev machine can spare; the runner has room for more and
       # D8 needs it to finish the release bundle.
-      - name: Assemble debug + release APK
+      - name: Assemble release APK
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug assembleRelease \
+          ./gradlew assembleRelease \
             --no-daemon --stacktrace \
             -Dorg.gradle.jvmargs=-Xmx3072m \
             -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
@@ -49,13 +90,6 @@ jobs:
         with:
           name: streamz-release-${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
-          retention-days: 7
-          if-no-files-found: error
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: streamz-debug-${{ github.run_number }}
-          path: android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
           if-no-files-found: error
 
@@ -68,7 +102,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install JS dependencies
