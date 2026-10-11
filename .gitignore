@@ -27,6 +27,9 @@ android/keystore.properties
 # inside is restricted in the Google Cloud console instead (see spec §18).
 functions/.env
 functions/.env.*
+# Firebase Admin service-account credentials. google-services.json above is
+# public-by-design; these are not — they carry a private key that mints admin tokens.
+*firebase-adminsdk*.json
 .firebase/
 *-debug.log
 *-error.log
