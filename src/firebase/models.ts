@@ -55,6 +55,12 @@ export interface AccessResult {
 export interface ActivateResult {
   code: ActivateCode;
   expiresAt: number | null;
+  /**
+   * The length of the term in days, so a client can show how much of it is left rather
+   * than only when it ends. Read from the key document — the one place the admin actually
+   * set it — and null for every refusal, where no term was granted.
+   */
+  durationDays: number | null;
 }
 
 export interface UserDoc {

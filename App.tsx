@@ -43,6 +43,11 @@ const FONTS = {
   'Inter-600': require('./assets/fonts/Inter-600.ttf'),
   'Inter-700': require('./assets/fonts/Inter-700.ttf'),
   'Inter-800': require('./assets/fonts/Inter-800.ttf'),
+  'DMSans-400': require('./assets/fonts/DMSans-400.ttf'),
+  'DMSans-500': require('./assets/fonts/DMSans-500.ttf'),
+  'DMSans-600': require('./assets/fonts/DMSans-600.ttf'),
+  'JetBrainsMono-500': require('./assets/fonts/JetBrainsMono-500.ttf'),
+  'JetBrainsMono-600': require('./assets/fonts/JetBrainsMono-600.ttf'),
 };
 
 export default function App() {

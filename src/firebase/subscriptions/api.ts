@@ -12,6 +12,7 @@ import {
   DAY_MS,
   type AccessResult,
   type AccessStatus,
+  type ActivateCode,
   type ActivateResult,
   type AppConfigDoc,
   type DeviceDoc,
@@ -102,6 +103,13 @@ const maybeNum = (value: unknown): number | null =>
 
 const deviceDocId = (uid: string, installationId: string): string => `${uid}__${installationId}`;
 
+/** A refusal grants no access, so it carries neither an expiry nor a term length. */
+const refused = (code: ActivateCode): ActivateResult => ({
+  code,
+  expiresAt: null,
+  durationDays: null,
+});
+
 const deviceRecord = (
   uid: string,
   installationId: string,
@@ -175,12 +183,12 @@ export async function validate(): Promise<AccessResult> {
 
 export async function activate(rawKey: string): Promise<ActivateResult> {
   const body = normalizeKeyBody(rawKey);
-  if (!body) return { code: 'NOT_FOUND', expiresAt: null };
+  if (!body) return refused('NOT_FOUND');
   if (!ensureFirebase()) throw new TransportError('firebase-unconfigured');
   const uid = currentUserUid();
-  if (!uid) return { code: 'UNAUTHENTICATED', expiresAt: null };
+  if (!uid) return refused('UNAUTHENTICATED');
   const keyId = await keyDocId(body, sha256Hex);
-  if (!keyId) return { code: 'NOT_FOUND', expiresAt: null };
+  if (!keyId) return refused('NOT_FOUND');
 
   const installationId = await getInstallationId();
   const db = getFirestore();
@@ -192,20 +200,26 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
         const keyRef = doc(db, 'subscriptionKeys', keyId);
         const userRef = doc(db, 'users', uid);
         const keySnap = await tx.get(keyRef);
-        if (!keySnap.exists()) return { code: 'NOT_FOUND', expiresAt: null };
+        if (!keySnap.exists()) return refused('NOT_FOUND');
         const key = asRecord(keySnap.data());
 
         const now = Date.now();
         const keyStatus = String(key.status ?? 'UNUSED').toUpperCase();
         const keyExpiry = maybeNum(key.expiresAt);
-        if (keyStatus === 'REVOKED') return { code: 'REVOKED', expiresAt: null };
+        // The admin owns this field, and it is the only statement of how long the term was
+        // meant to last — an already-owned key reports it unchanged from when it minted.
+        const durationDays = Math.max(
+          1,
+          Math.floor(num(key.durationDays, CONFIG_DEFAULTS.keyDurationDays)),
+        );
+        if (keyStatus === 'REVOKED') return refused('REVOKED');
         if (keyStatus === 'EXPIRED' || (keyExpiry !== null && keyExpiry <= now)) {
-          return { code: 'EXPIRED', expiresAt: null };
+          return refused('EXPIRED');
         }
         if (keyStatus === 'ACTIVE') {
           return key.uid === uid
-            ? { code: 'ALREADY_OWNED', expiresAt: keyExpiry }
-            : { code: 'ALREADY_BOUND', expiresAt: null };
+            ? { code: 'ALREADY_OWNED', expiresAt: keyExpiry, durationDays }
+            : refused('ALREADY_BOUND');
         }
 
         // Read inside the transaction: the rotation ceiling must be decided against the
@@ -217,9 +231,8 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
         const rotations = num(existing?.installationRotations, 0);
         const config = asRecord((await tx.get(doc(db, 'config', 'app'))).data());
         const maxRotations = num(config.maxInstallationRotations, CONFIG_DEFAULTS.maxInstallationRotations);
-        if (rotating && rotations >= maxRotations) return { code: 'CEILING', expiresAt: null };
+        if (rotating && rotations >= maxRotations) return refused('CEILING');
 
-        const durationDays = Math.max(1, Math.floor(num(key.durationDays, CONFIG_DEFAULTS.keyDurationDays)));
         const expiresAt = now + durationDays * DAY_MS;
 
         // Merge, never replace: keyHash, durationDays, createdAt and createdBy are
@@ -271,7 +284,7 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
           deviceRecord(uid, installationId, now, null),
           { merge: true },
         );
-        return { code: 'ACTIVATED', expiresAt };
+        return { code: 'ACTIVATED', expiresAt, durationDays };
       }),
       ACTIVATE_TIMEOUT_MS,
     );

@@ -38,6 +38,51 @@ export const BRAND_COLOR = {
   dark: '#B20710',
 } as const;
 
+/**
+ * The logo-system ramp: the Z's diagonal and the auth screens read as one brand
+ * because both stop here. Deliberately separate from BRAND_COLOR, which the rest
+ * of the app still uses — migrating 47 hard-coded references is its own change.
+ */
+export const MARK_RAMP = {
+  bright: '#FF3B52',
+  deep: '#C20015',
+} as const;
+
+/**
+ * Sign-in / activation palette. These screens are the only surfaces designed
+ * against it, so the values live here rather than in global.css, where they
+ * would imply a theme the rest of the app does not follow.
+ */
+export const AUTH = {
+  ink: '#070506',
+  /** Card face, top → bottom. */
+  surfaceTop: '#131316',
+  surfaceBottom: '#0E0E11',
+  field: '#0A0A0C',
+  chip: '#111114',
+  hairline: '#232329',
+  edge: '#26262C',
+  rail: '#2A2A31',
+  track: '#1F1F25',
+  rowDivider: '#1D1D22',
+  text: '#FFFFFF',
+  muted: '#A1A1AA',
+  faint: '#8B8B94',
+  dim: '#9A9AA3',
+  ctaTop: '#FF2D46',
+  ctaBottom: '#B0000F',
+  success: '#2EDC8C',
+  /** A refusal is loud but not alarming: brighter than the CTA, never BRAND_COLOR. */
+  alert: '#FF5468',
+  alertText: '#FF6B7D',
+  /** The button's travelling highlight. */
+  sheen: 'rgba(255,255,255,0.22)',
+  haloRed: 'rgba(255,45,70,0.26)',
+  haloGreen: 'rgba(46,220,140,0.22)',
+  badgeGreenBg: 'rgba(46,220,140,0.10)',
+  badgeGreenEdge: 'rgba(46,220,140,0.25)',
+} as const;
+
 /** §9: the accent gradient is reserved — CTA, active nav, highlights, logo. */
 export const GRADIENT = {
   accent: [BRAND_COLOR.bright, BRAND_COLOR.primary, BRAND_COLOR.dark] as const,
@@ -85,6 +130,13 @@ export const FONT = {
   bodySemiBold: 'Inter-600',
   bodyBold: 'Inter-700',
   bodyExtraBold: 'Inter-800',
+  /** The auth flow's body face. The rest of the app stays on Inter for now. */
+  sans: 'DMSans-400',
+  sansMedium: 'DMSans-500',
+  sansSemiBold: 'DMSans-600',
+  /** A key is read character by character, so it is set monospaced. */
+  mono: 'JetBrainsMono-500',
+  monoSemiBold: 'JetBrainsMono-600',
 } as const;
 
 export const TYPE_SIZE = {
