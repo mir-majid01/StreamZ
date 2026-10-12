@@ -146,6 +146,30 @@ describe('minting keys', () => {
     );
   });
 
+  // The client stamps createdAt with its own clock. A warm write stream can commit the
+  // mutation before the server clock reaches that stamp, so a zero-tolerance comparison
+  // refuses a mint that is merely a few hundred milliseconds "in the future" — which is
+  // exactly how Generate started working once per session and then failing every time.
+  it('accepts a mint stamped slightly ahead of the server clock', async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(staff('admin'), 'subscriptionKeys', HASH_B),
+        keyDoc({ keyHash: HASH_B, createdAt: Date.now() + 60_000 }),
+      ),
+    );
+  });
+
+  // The tolerance is bounded, so the guard still means something: nobody gets to mint a
+  // key that claims to have been created an hour from now.
+  it('still refuses a key stamped far in the future', async () => {
+    await assertFails(
+      setDoc(
+        doc(staff('admin'), 'subscriptionKeys', HASH_B),
+        keyDoc({ keyHash: HASH_B, createdAt: Date.now() + 3_600_000 }),
+      ),
+    );
+  });
+
   it('refuses a document id that is not the stored hash', async () => {
     // The whole addressing scheme rests on this, so it is enforced rather than assumed.
     await assertFails(setDoc(doc(staff('admin'), 'subscriptionKeys', HASH_B), keyDoc()));
@@ -260,6 +284,14 @@ describe('activating a key', () => {
     expect(key.createdBy).toBe('owner@example.com');
     const user = await readAsAdmin(`users/${ALICE}`);
     expect(user.subscriptionId).toBe(HASH_A);
+  });
+
+  // Same race as the mint: activatedAt is the phone's clock, request.time is the server's,
+  // and a fast stream can commit the transaction before the server reaches that instant.
+  it('activates when the device clock runs slightly ahead of the server', async () => {
+    await activateIn(alice(), ALICE, HASH_A, 'inst-alice1', Date.now() + 60_000);
+    const key = await readAsAdmin(`subscriptionKeys/${HASH_A}`);
+    expect(key.status).toBe('ACTIVE');
   });
 
   it('activates onto a staff record that was made by hand in the console', async () => {
