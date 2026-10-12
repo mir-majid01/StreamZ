@@ -15,11 +15,14 @@ const required = (value: string | undefined, name: string): string => {
 };
 
 export const TMDB_CONFIG = {
-  BASE_URL: required(process.env.EXPO_PUBLIC_TMDB_BASE_URL, 'EXPO_PUBLIC_TMDB_BASE_URL'),
-  IMAGE_BASE_URL: required(
-    process.env.EXPO_PUBLIC_TMDB_IMAGE_BASE_URL,
-    'EXPO_PUBLIC_TMDB_IMAGE_BASE_URL',
-  ),
+  // Not secrets and never change, so an unset value falls back to the documented default
+  // instead of producing a base URL of '' — which makes `new URL()` throw before the first
+  // request is even attempted. The CI workflow already supplies these same two defaults.
+  BASE_URL: process.env.EXPO_PUBLIC_TMDB_BASE_URL?.trim() || 'https://api.themoviedb.org/3',
+  IMAGE_BASE_URL:
+    process.env.EXPO_PUBLIC_TMDB_IMAGE_BASE_URL?.trim() || 'https://image.tmdb.org/t/p/w500',
+  // The key gets no fallback: it is a secret, and a build without one has to say so plainly
+  // rather than let every request come back as a TMDB 401 that reads like a blocked network.
   API_KEY: required(process.env.EXPO_PUBLIC_TMDB_API_KEY, 'EXPO_PUBLIC_TMDB_API_KEY'),
 } as const;
 

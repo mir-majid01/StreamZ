@@ -39,6 +39,16 @@ class TMDBServiceImpl {
   private readonly apiKey = TMDB_CONFIG.API_KEY;
 
   private async request<T>(path: string, params: QueryParams = {}): Promise<T> {
+    // Checked here rather than left to TMDB: an empty key still produces a well-formed
+    // request, so the only symptom of a keyless build is a 401 from the upstream API,
+    // which points at the network instead of at the missing secret.
+    if (!this.apiKey) {
+      throw new TMDBError(
+        'No TMDB API key is configured. Set EXPO_PUBLIC_TMDB_API_KEY and rebuild — ' +
+          'EXPO_PUBLIC_* values are inlined into the bundle at build time.',
+      );
+    }
+
     const url = new URL(`${this.baseUrl}${path}`);
     url.searchParams.set('api_key', this.apiKey);
     for (const [key, value] of Object.entries(params)) {
