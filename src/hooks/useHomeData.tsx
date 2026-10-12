@@ -113,7 +113,6 @@ export const HomeDataProvider = ({ children }: { children: ReactNode }) => {
   );
 
   const loadWave1 = useCallback(async () => {
-    setError(null);
     const regionCode = regionRef.current;
     const [movies, tv] = await Promise.all([
       TMDBService.getPopularMovies(1, regionCode),
