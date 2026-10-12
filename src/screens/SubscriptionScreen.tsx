@@ -1,9 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Linking, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
+  withDelay,
   withSequence,
   withTiming,
 } from 'react-native-reanimated';
@@ -36,7 +38,7 @@ import {
   usePrefersReducedMotion,
 } from '@/src/components/streamz';
 import { BRAND } from '@/src/config/brand';
-import { AUTH, FONT, SPACE } from '@/src/theme/tokens';
+import { AUTH, FONT, MARK_RAMP, SPACE } from '@/src/theme/tokens';
 import { formatKeyInput, looksPlausible, normalizeKeyBody } from '@/src/firebase/subscriptions/keyFormat';
 import { activate, isRulesRefusal, TransportError } from '@/src/firebase/subscriptions/api';
 import { AppEvent, logAppEvent } from '@/src/firebase/analytics/appEvents';
@@ -46,6 +48,9 @@ import { useSession } from '@/src/firebase/auth/SessionProvider';
 import { signOut } from '@/src/firebase/auth/googleAuth';
 
 const KEY_BODY_LENGTH = 20;
+
+/** The design's sweep curve, shared by the meters and the remaining-term bar. */
+const BAR_CURVE = Easing.bezier(0.3, 0.7, 0.2, 1);
 
 const SUPPORT_SUBJECT = encodeURIComponent(`${BRAND.name} subscription`);
 
@@ -363,6 +368,18 @@ const ActivatedPanel = ({
       ? Math.min(1, Math.max(0, (active.expiresAt - now) / (active.durationDays * DAY_MS)))
       : null;
 
+  // The bar arrives at 1s, sweeping on scaleX so the animation never relayouts a
+  // width. Same design curve as the key-entry meters, same 4px height.
+  const sweep = useSharedValue(reduced ? 1 : 0);
+  useEffect(() => {
+    if (reduced) {
+      sweep.value = 1;
+      return;
+    }
+    sweep.value = withDelay(1000, withTiming(1, { duration: 1000, easing: BAR_CURVE }));
+  }, [reduced, sweep]);
+  const barSweep = useAnimatedStyle(() => ({ transform: [{ scaleX: sweep.value }] }));
+
   return (
     <View style={styles.root}>
       <AuthBackdrop anchor="high" />
@@ -409,7 +426,14 @@ const ActivatedPanel = ({
 
             {ratio != null ? (
               <View style={styles.barTrack}>
-                <View style={[styles.barFill, { width: `${ratio * 100}%` }]} />
+                <Animated.View style={[styles.barFill, { width: `${ratio * 100}%` }, barSweep]}>
+                  <LinearGradient
+                    colors={[MARK_RAMP.bright, MARK_RAMP.deep]}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={StyleSheet.absoluteFill}
+                  />
+                </Animated.View>
               </View>
             ) : null}
 
@@ -548,7 +572,7 @@ const styles = StyleSheet.create({
     backgroundColor: AUTH.track,
     overflow: 'hidden',
   },
-  barFill: { height: 4, borderRadius: 2, backgroundColor: AUTH.alert },
+  barFill: { height: 4, borderRadius: 2, transformOrigin: '0% 50%' },
   rows: { marginTop: 20 },
   row: {
     flexDirection: 'row',
