@@ -86,19 +86,23 @@ class ApkIntegrityModule : Module() {
   private fun archivePackageName(file: File): String? = archiveInfo(file)?.packageName
 
   /**
-   * The signed certificate as DER, from whichever API level the device offers. `Signature#toByteArray`
-   * and `X509Certificate#getEncoded` both return the encoded certificate, so the bytes hashed below
-   * are the certificate itself on every path.
+   * The signer's certificate as DER, from whichever API level the device offers.
+   * `Signature#toByteArray` returns the encoded certificate, so the bytes hashed
+   * below are the certificate itself on either path.
+   *
+   * No fallback from the v2 block to the deprecated `signatures` array: an archive
+   * whose modern signers cannot be read is refused rather than judged on a weaker
+   * signature set.
    */
-  @Suppress("DEPRECATION")
   private fun signerDer(file: File): ByteArray? {
     val info = archiveInfo(file) ?: return null
-    return when {
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.R ->
-        info.signingInfo?.apkContentsSignersCertificate?.encoded
-      Build.VERSION.SDK_INT >= Build.VERSION_CODES.P ->
-        info.signingInfo?.apkContentSigners?.firstOrNull()?.toByteArray()
-      else -> info.signatures?.firstOrNull()?.toByteArray()
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+      runCatching {
+        info.signingInfo?.apkContentsSigners?.firstOrNull()?.toByteArray()
+      }.getOrNull()
+    } else {
+      @Suppress("DEPRECATION")
+      info.signatures?.firstOrNull()?.toByteArray()
     }
   }
 
