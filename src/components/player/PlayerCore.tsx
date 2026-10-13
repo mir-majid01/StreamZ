@@ -55,6 +55,10 @@ import {
 import { useControlsVisibility } from '@/src/components/player/useControlsVisibility';
 import { useTVRemote } from '@/src/components/player/useTVRemote';
 import { isRtlLanguage } from '@/src/constants/languages';
+import {
+  resolveActiveAudioIndex,
+  toAudioTrackOptions,
+} from '@/src/utils/audioTracks';
 import { useContinueWatching } from '@/src/hooks/useContinueWatching';
 import { useWatchSession } from '@/src/hooks/useWatchSession';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
@@ -285,6 +289,16 @@ export const PlayerCore = ({
     setAudioTracks(data.audioTracks ?? []);
   }, []);
 
+  // What the Audio row reports and highlights. `selectedAudioIndex` is only the
+  // user's override, so before they touch anything this falls back to the
+  // track the player itself marked selected — and to nothing at all if the
+  // player never said, in which case the drawer shows "Default" instead of
+  // claiming the first track is what you're hearing.
+  const activeAudioIndex = useMemo(
+    () => resolveActiveAudioIndex(audioTracks, selectedAudioIndex),
+    [audioTracks, selectedAudioIndex],
+  );
+
   // Subtitle tracks the *stream itself* carries (embedded HLS/MP4 subtitle
   // groups). These are surfaced by react-native-video's onTextTracks and
   // selected natively via selectedTextTrack {type:'index'} — distinct from the
@@ -471,6 +485,7 @@ export const PlayerCore = ({
   const settingsActive =
     playbackRate !== 1 ||
     subtitlesActive ||
+    selectedAudioIndex != null ||
     selectedVariantUri != null ||
     aspect !== 'contain';
 
@@ -1456,14 +1471,8 @@ export const PlayerCore = ({
         onSelectStreamflixSource={
           onSelectStreamflixSource ? handleSelectStreamflixSource : undefined
         }
-        audioTracks={audioTracks.map((t, i) => ({
-          index: t.index ?? i,
-          label:
-            t.title ||
-            t.language ||
-            `Track ${(t.index ?? i) + 1}`,
-        }))}
-        selectedAudioIndex={selectedAudioIndex}
+        audioTracks={toAudioTrackOptions(audioTracks)}
+        selectedAudioIndex={activeAudioIndex}
         onSelectAudio={setSelectedAudioIndex}
         variants={variants}
         selectedVariantUri={selectedVariantUri}

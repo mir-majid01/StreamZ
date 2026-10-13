@@ -26,6 +26,7 @@ import {
   VIDEO_ASPECT_OPTIONS,
   type VideoAspect,
 } from '@/src/hooks/useVideoAspect';
+import type { AudioTrackOption } from '@/src/utils/audioTracks';
 import type { Variant } from '@/src/utils/hlsVariants';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 
@@ -93,11 +94,6 @@ export interface StreamflixSourceOption {
   language?: string;
 }
 
-export interface AudioTrackOption {
-  index: number;
-  label: string;
-}
-
 interface PlayerSettingsDrawerProps {
   visible: boolean;
   onClose: () => void;
@@ -111,8 +107,11 @@ interface PlayerSettingsDrawerProps {
   activeStreamflixSourceId?: string | null;
   onSelectStreamflixSource?: (id: string) => void;
   audioTracks?: AudioTrackOption[];
+  /** The track actually playing, or `null` when the user has not picked one and
+   * the player never reported which of its tracks it chose. */
   selectedAudioIndex?: number | null;
-  onSelectAudio?: (index: number) => void;
+  /** `null` hands the choice back to the player's default track selection. */
+  onSelectAudio?: (index: number | null) => void;
   variants: Variant[];
   /** `null` means "Auto" (master ABR). */
   selectedVariantUri: string | null;
@@ -210,9 +209,12 @@ export const PlayerSettingsDrawer = ({
     streamflixSources.find((s) => s.id === activeStreamflixSourceId)?.name ??
     streamflixSources[0]?.name ??
     'Auto';
+  // `null` here means nobody told us which track is playing — the player picked
+  // one by its own rules and never reported it. Say so instead of naming the
+  // first track, which is a guess about what the user is hearing.
   const audioValue =
     selectedAudioIndex == null
-      ? audioTracks[0]?.label ?? 'Default'
+      ? 'Default'
       : audioTracks.find((t) => t.index === selectedAudioIndex)?.label ??
         'Default';
 
@@ -357,15 +359,24 @@ export const PlayerSettingsDrawer = ({
 
           {activeCategory === 'audio' && (
             <VStack space="xs">
+              {/* Without this the control is one-way: a wrong pick — or a track
+                  the stream switches mid-playback — could not be undone without
+                  leaving the player. */}
+              <OptionRow
+                label="Default"
+                hint="Player's choice"
+                active={selectedAudioIndex == null}
+                hasTVPreferredFocus
+                onPress={() => {
+                  onSelectAudio?.(null);
+                  setActiveCategory(null);
+                }}
+              />
               {audioTracks.map((track, idx) => (
                 <OptionRow
                   key={track.index}
                   label={track.label}
-                  active={
-                    selectedAudioIndex == null
-                      ? idx === 0
-                      : track.index === selectedAudioIndex
-                  }
+                  active={track.index === selectedAudioIndex}
                   hasTVPreferredFocus={idx === 0}
                   onPress={() => {
                     onSelectAudio?.(track.index);
