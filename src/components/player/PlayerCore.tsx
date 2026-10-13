@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StatusBar, StyleSheet, useWindowDimensions } from 'react-native';
+import {
+  BackHandler,
+  Platform,
+  Pressable,
+  StatusBar,
+  StyleSheet,
+  useWindowDimensions,
+} from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import Video, {
   SelectedTrackType,
@@ -26,6 +33,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { Text } from '@/components/ui/text';
 import { PlayerControls } from '@/src/components/player/PlayerControls';
 import { PlayerEpisodeDrawer } from '@/src/components/player/PlayerEpisodeDrawer';
+import { PlayerLockOverlay } from '@/src/components/player/PlayerLockOverlay';
 import { PartyLobbyModal } from '@/src/components/party/PartyLobbyModal';
 import { PlayerChatDrawer } from '@/src/components/party/PlayerChatDrawer';
 import { PlayerChatToast } from '@/src/components/party/PlayerChatToast';
@@ -245,6 +253,10 @@ export const PlayerCore = ({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [episodesOpen, setEpisodesOpen] = useState(false);
   const [pipActive, setPipActive] = useState(false);
+  // Session-only, like the subtitle offset: a screen left locked would be worse
+  // than useless the next time something plays here. `PlayerScreen` remounts
+  // `PlayerCore` on any source or episode change, which is what resets it.
+  const [locked, setLocked] = useState(false);
   // Session-only: resets to Normal every time a new video/PlayerCore mounts,
   // rather than persisting app-wide — see the flick-player-controls skill's
   // "session-only vs per-server vs persisted" table.
@@ -703,7 +715,44 @@ export const PlayerCore = ({
     chatOpen ||
     partyIntroOpen ||
     partyLobbyOpen;
-  const { visible, show, toggle } = useControlsVisibility(isPlaying, controlsHold);
+  const { visible, show, toggle } = useControlsVisibility(
+    isPlaying,
+    controlsHold,
+  );
+
+  // Locking has to dismiss whatever is open, otherwise a drawer that was
+  // already on screen stays live on top of the lock and every one of its rows
+  // remains pressable — a lock you can play through isn't a lock.
+  const handleLock = useCallback(() => {
+    setSettingsOpen(false);
+    setEpisodesOpen(false);
+    setPartyOpen(false);
+    setChatOpen(false);
+    setPartyIntroOpen(false);
+    setPartyLobbyOpen(false);
+    setLocked(true);
+  }, []);
+
+  const handleUnlock = useCallback(() => {
+    setLocked(false);
+    show();
+  }, [show]);
+
+  // Back is the only exit we cannot remove, so while locked it has to release
+  // the lock rather than leave the user one gesture away from an un-exitable
+  // screen. Only the locked state installs the listener; unlocked, the system
+  // Back behaves exactly as it did before this feature existed.
+  useEffect(() => {
+    if (!locked) return;
+    const subscription = BackHandler.addEventListener(
+      'hardwareBackPress',
+      () => {
+        handleUnlock();
+        return true;
+      },
+    );
+    return () => subscription.remove();
+  }, [locked, handleUnlock]);
 
   // Seconds left in the episode; `Infinity` until the player reports a real
   // duration so the Up Next card never flashes on load.
@@ -1227,6 +1276,7 @@ export const PlayerCore = ({
     chatOpen ||
     partyIntroOpen ||
     partyLobbyOpen ||
+    locked ||
     showUpNext ||
     seriesEnded ||
     showWatchNext;
@@ -1368,7 +1418,10 @@ export const PlayerCore = ({
 
       {!pipActive && seriesEnded && <SeriesEndOverlay />}
 
-      {!pipActive && !seriesEnded && showWatchNext && recommendation && (
+      {/* Up Next / Watch Next offer a Play button, so they are suppressed while
+        locked rather than stacked over the lock. Auto-advance is driven by the
+        end-of-playback effect, not by this card, so hiding it costs nothing. */}
+      {!pipActive && !locked && !seriesEnded && showWatchNext && recommendation && (
         <WatchNextOverlay
           item={recommendation}
           onPlay={() => onPlayRecommendation?.(recommendation)}
@@ -1376,7 +1429,7 @@ export const PlayerCore = ({
         />
       )}
 
-      {!pipActive && !seriesEnded && showUpNext && nextEpisodeInfo && (
+      {!pipActive && !locked && !seriesEnded && showUpNext && nextEpisodeInfo && (
         <UpNextOverlay
           season={nextEpisodeInfo.season}
           episode={nextEpisodeInfo.episode}
@@ -1386,11 +1439,14 @@ export const PlayerCore = ({
         />
       )}
 
+      {/* `locked` is tested before the Up Next / Watch Next / series-end
+        conditions, not alongside them. Those flags only hide the transport
+        controls, so gating the lock chrome on them too would leave a locked
+        screen with no visible Unlock the moment an episode neared its end. */}
       {!pipActive &&
-        !seriesEnded &&
-        !showWatchNext &&
-        !showUpNext &&
-        (visible ? (
+        (locked ? (
+          <PlayerLockOverlay onUnlock={handleUnlock} />
+        ) : seriesEnded || showWatchNext || showUpNext ? null : visible ? (
           <PlayerControls
             title={title}
             subtitle={subtitle}
@@ -1430,6 +1486,7 @@ export const PlayerCore = ({
               brightness != null ? handleBrightnessChange : undefined
             }
             onEnterPip={pipSupported ? enterPip : undefined}
+            onLock={handleLock}
             partyCode={partyRoom?.code}
             partyLocked={partyRole === 'guest'}
             onOpenParty={

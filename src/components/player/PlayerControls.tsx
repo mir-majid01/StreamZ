@@ -3,6 +3,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import {
   ArrowLeft,
   ListVideo,
+  Lock,
   Pause,
   PictureInPicture2,
   Play,
@@ -54,6 +55,13 @@ interface PlayerControlsProps {
   settingsActive?: boolean;
   /** When provided, shows a Picture-in-Picture button. */
   onEnterPip?: () => void;
+  /**
+   * When provided, shows a Lock button. Locking swaps this whole component for
+   * `PlayerLockOverlay`, so the only way back is the Unlock button there plus
+   * the system Back gesture — which is why the affordance is an action on the
+   * top bar rather than a row buried in the settings drawer.
+   */
+  onLock?: () => void;
   /** Watch-party room code shown as a chip (not a fifth settings icon). */
   partyCode?: string;
   partyLocked?: boolean;
@@ -110,6 +118,7 @@ export const PlayerControls = ({
   onOpenSettings,
   settingsActive,
   onEnterPip,
+  onLock,
   volume,
   onVolumeChange,
   brightness,
@@ -201,6 +210,15 @@ export const PlayerControls = ({
             focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
           >
             <Icon as={Settings2} size="lg" className="text-foreground" />
+          </Focusable>
+        )}
+        {onLock && (
+          <Focusable
+            onPress={onLock}
+            className="rounded-full bg-background/40 p-2"
+            focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
+          >
+            <Icon as={Lock} size="lg" className="text-foreground" />
           </Focusable>
         )}
         {onEnterPip && (
