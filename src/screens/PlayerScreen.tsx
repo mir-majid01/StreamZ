@@ -48,6 +48,12 @@ import {
   type MediaItem,
 } from '@/src/types';
 import { resolveFirstAiredEpisode } from '@/src/hooks/useWatchNextRecommendation';
+import {
+  deriveStage,
+  isBudgetFailure,
+  withinBudget,
+  type FailureReason,
+} from '@/src/utils/sourceResolution';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
 import {
@@ -60,6 +66,24 @@ import {
   mediaItemFromPartyContent,
   partyContentFromItem,
 } from '@/src/party/content';
+
+/**
+ * Wall-clock budget for one candidate's extraction. `StreamflixService` already
+ * aborts each individual request at 15s, so this only fires when a request
+ * hangs somewhere that fetch's own timeout cannot reach (a stalled body, a
+ * wedged keep-alive). Sized above the three sequential calls the Videasy
+ * extraction can make so a merely slow host is not cut off.
+ */
+const RESOLVE_CANDIDATE_BUDGET_MS = 60_000;
+
+/**
+ * How long to wait after a URL is handed to the player for the player to prove
+ * it started. A host that returns a URL but never delivers a playable stream
+ * can leave the native player in `loading` forever without ever firing an
+ * error, and nothing else would fail over. Deliberately generous: ExoPlayer's
+ * own startup buffer is 2.5s, but a cold CDN can take seconds more.
+ */
+const PLAYBACK_STARTUP_BUDGET_MS = 25_000;
 
 export const PlayerScreen = ({
   route,
@@ -138,6 +162,20 @@ export const PlayerScreen = ({
     number | undefined
   >(resumeFrom);
   const resolvedRef = useRef(false);
+  /**
+   * True only once the native player has reported a real load for the source it
+   * was mounted with. A URL from a host is not playback, and this is what keeps
+   * those two facts apart in the UI and in the startup watchdog below.
+   */
+  const [playbackConfirmed, setPlaybackConfirmed] = useState(false);
+  /**
+   * How the previous candidate gave up, so the retrying label can say which one
+   * failed and why instead of implying nothing went wrong.
+   */
+  const [lastFailure, setLastFailure] = useState<{
+    label: string | null;
+    reason: FailureReason;
+  } | null>(null);
   // Servers already tried (and failed) for the CURRENT target — reset
   // whenever the target itself changes (item/episode) or the user
   // explicitly picks a server, so a fresh failover cycle can run each time.
@@ -151,18 +189,31 @@ export const PlayerScreen = ({
   // server's `{imdbId}` URL placeholder, if its pattern uses one. Swallow
   // errors; servers that don't need it are unaffected by a missing value.
   const [imdbId, setImdbId] = useState<string | null>(null);
+  /**
+   * Whether the lookup above has answered, one way or the other. The resolver
+   * waits for this instead of re-running when the id arrives, so a title is
+   * listed against the hosts once rather than twice with the first attempt
+   * thrown away mid-flight.
+   */
+  const [imdbSettled, setImdbSettled] = useState(false);
   useEffect(() => {
     let cancelled = false;
     setImdbId(null);
+    setImdbSettled(false);
     const request =
       type === 'tv'
         ? TMDBService.getTVExternalIds(item.id)
         : TMDBService.getMovieExternalIds(item.id);
     request
       .then((res) => {
-        if (!cancelled) setImdbId(res.imdb_id ?? null);
+        if (cancelled) return;
+        setImdbId(res.imdb_id ?? null);
+        setImdbSettled(true);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (cancelled) return;
+        setImdbSettled(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -194,6 +245,13 @@ export const PlayerScreen = ({
     resolvedRef.current = true;
     setSource(s);
   }, []);
+
+  // Every source change is a fresh attempt the player has not proven yet —
+  // whether it came from a first resolution, a failover, or a manual switch.
+  // Resetting here covers all of those without touching each reset site.
+  useEffect(() => {
+    setPlaybackConfirmed(false);
+  }, [source]);
 
   const publishHostSource = useCallback(
     (url: string, kind?: 'hls' | 'file', sourceId?: string) => {
@@ -376,6 +434,7 @@ export const PlayerScreen = ({
     (id: string, resumeFromSeconds: number) => {
       if (id === activeServer.id) return;
       setTriedServerIds(new Set());
+      setLastFailure(null);
       switchToServer(id, resumeFromSeconds);
     },
     [activeServer.id, switchToServer],
@@ -436,6 +495,9 @@ export const PlayerScreen = ({
   const resetTriedStreamflix = useCallback(() => {
     triedStreamflixIdsRef.current = new Set();
     setTriedStreamflixIds(new Set());
+    // A new cycle (chosen source, new episode, new target) starts with a clean
+    // history; only automatic failover keeps the previous reason around to name.
+    setLastFailure(null);
     setTryingStreamflixSource(null);
   }, []);
 
@@ -476,6 +538,10 @@ export const PlayerScreen = ({
     if (playingDownloaded) return;
     if (resolvedRef.current || source || noSource || waitingForHost) return;
     if (!usingRestResolver) return;
+    // Videasy folds the IMDb id into its search, so starting before the lookup
+    // answers lists sources with a weaker key and then discards that attempt the
+    // moment the id lands. FlixQuest never uses it and starts immediately.
+    if (usingStreamflix && !imdbSettled) return;
     let cancelled = false;
     const run = async () => {
       try {
@@ -513,9 +579,27 @@ export const PlayerScreen = ({
         for (const candidate of order) {
           if (cancelled || resolvedRef.current) return;
           setTryingStreamflixSource({ id: candidate.id, name: candidate.name });
-          const resolved = usingFlixquest
-            ? candidate
-            : await StreamflixService.resolveSource(candidate);
+          let resolved: StreamflixSource | null;
+          try {
+            resolved = usingFlixquest
+              ? candidate
+              : await withinBudget(
+                  () => StreamflixService.resolveSource(candidate),
+                  RESOLVE_CANDIDATE_BUDGET_MS,
+                );
+          } catch (error) {
+            if (cancelled || resolvedRef.current) return;
+            // Anything other than running out of budget keeps failing over at
+            // the server level, exactly as before.
+            if (!isBudgetFailure(error)) throw error;
+            // One wedged host must not end the whole attempt: name it, skip
+            // it, and give the next candidate its turn.
+            // eslint-disable-next-line no-console
+            console.log('[Streamflix]', 'player: budget exceeded by', candidate.name);
+            setLastFailure({ label: candidate.name, reason: 'timed_out' });
+            markTriedStreamflix(candidate.id);
+            continue;
+          }
           if (cancelled || resolvedRef.current) return;
           if (resolved?.uri) {
             setTryingStreamflixSource(null);
@@ -545,7 +629,9 @@ export const PlayerScreen = ({
     noSource,
     waitingForHost,
     usingRestResolver,
+    usingStreamflix,
     usingFlixquest,
+    imdbSettled,
     activeServer,
     item,
     type,
@@ -576,7 +662,11 @@ export const PlayerScreen = ({
   // decoder/DRM issue, etc.) — reported by `PlayerCore`'s native `<Video>`
   // error handler. Also fails over, preserving how far playback got.
   const handlePlaybackFailed = useCallback(
-    (resumeFromSeconds: number) => {
+    (resumeFromSeconds: number, reason: FailureReason = 'error') => {
+      const failing = streamflixSources.find(
+        (s) => s.id === activeStreamflixSourceId,
+      );
+      setLastFailure({ label: failing?.name ?? null, reason });
       if (usingRestResolver && activeStreamflixSourceId) {
         markTriedStreamflix(activeStreamflixSourceId);
         const next = streamflixSources.find(
@@ -600,6 +690,83 @@ export const PlayerScreen = ({
       markTriedStreamflix,
     ],
   );
+
+  const handlePlaybackConfirmed = useCallback(() => {
+    setPlaybackConfirmed(true);
+    setLastFailure(null);
+  }, []);
+
+  /**
+   * What can honestly be claimed about the current attempt. `playing` requires a
+   * player event, never just a URL, and `failed` is checked first so a source
+   * left over from an earlier attempt can't read as live.
+   */
+  const stage = useMemo(
+    () =>
+      deriveStage({
+        failed: noSource,
+        hasSource: source != null,
+        confirmed: playbackConfirmed,
+        resolving: tryingStreamflixSource != null,
+        candidatesPending: streamflixSources.length > 0,
+      }),
+    [
+      noSource,
+      source,
+      playbackConfirmed,
+      tryingStreamflixSource,
+      streamflixSources.length,
+    ],
+  );
+
+  // A host can hand over a URL and then stall without the native player ever
+  // reporting an error — ExoPlayer simply sits in `loading`. Nothing else would
+  // ever leave that state, so the attempt gets a bounded window to prove it
+  // started before it is written off as timed out and failed over.
+  useEffect(() => {
+    if (
+      !source ||
+      playingDownloaded ||
+      waitingForHost ||
+      stage === 'playing'
+    ) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      handlePlaybackFailed(effectiveResumeFrom ?? 0, 'timed_out');
+    }, PLAYBACK_STARTUP_BUDGET_MS);
+    return () => clearTimeout(timer);
+  }, [
+    source,
+    stage,
+    playingDownloaded,
+    waitingForHost,
+    effectiveResumeFrom,
+    handlePlaybackFailed,
+  ]);
+
+  /**
+   * What the waiting screen says. The candidate that just gave up is named only
+   * when this wait is its retry, so a first attempt never looks like a recovery
+   * from a failure that did not happen.
+   */
+  const waitingLabel = useMemo(() => {
+    const current =
+      tryingStreamflixSource?.name ??
+      (triedServerIds.size ? activeServer.name : null);
+    if (!current) return 'Finding stream…';
+    if (lastFailure && lastFailure.label !== current) {
+      const why =
+        lastFailure.reason === 'timed_out' ? 'timed out' : 'could not play';
+      return `${lastFailure.label ?? 'The previous source'} ${why} — trying ${current}…`;
+    }
+    return `Trying ${current}…`;
+  }, [
+    tryingStreamflixSource,
+    triedServerIds.size,
+    activeServer.name,
+    lastFailure,
+  ]);
 
   // Switch to a different episode without recreating the whole player screen:
   // reset the resolved source so `WebViewScraper` re-runs with new params, and
@@ -809,6 +976,7 @@ export const PlayerScreen = ({
         }
         extractorSubtitles={extractorSubtitles}
         onPlaybackFailed={playingDownloaded ? undefined : handlePlaybackFailed}
+        onPlaybackConfirmed={handlePlaybackConfirmed}
         localSubtitles={localSubtitles}
         isLocalDownload={playingDownloaded}
         onPlayRecommendation={handlePlayRecommendation}
@@ -857,9 +1025,11 @@ export const PlayerScreen = ({
             No video available
           </Text>
           <Text size="sm" className="mt-2 text-center text-muted-foreground">
-            {servers.length > 1
-              ? "We couldn't find a playable stream from any configured server."
-              : "We couldn't find a playable stream from the current server. Try a different server from Settings."}
+            {lastFailure
+              ? 'Some servers returned a stream, but none of them started playing.'
+              : servers.length > 1
+                ? "We couldn't find a playable stream from any configured server."
+                : "We couldn't find a playable stream from the current server. Try a different server from Settings."}
           </Text>
         </Center>
         <Pressable
@@ -917,13 +1087,7 @@ export const PlayerScreen = ({
       ) : (
         <Center style={StyleSheet.absoluteFill} className="bg-black">
           <Spinner size="large" color="#E50914" />
-          <Text className="mt-4 text-muted-foreground">
-            {tryingStreamflixSource
-              ? `Trying ${tryingStreamflixSource.name}…`
-              : triedServerIds.size
-                ? `Trying ${activeServer.name}…`
-                : 'Finding stream…'}
-          </Text>
+          <Text className="mt-4 text-muted-foreground">{waitingLabel}</Text>
         </Center>
       )}
       {!playingDownloaded && (

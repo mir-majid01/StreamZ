@@ -122,6 +122,13 @@ interface PlayerCoreProps {
    */
   onPlaybackFailed?: (resumeFrom: number) => void;
   /**
+   * Fired the first time the native player reports a real load (`onLoad`) for
+   * the source it was mounted with. This is the only signal that distinguishes
+   * "a host handed us a URL" from "playback actually started", so
+   * `PlayerScreen` uses it to close its startup watchdog.
+   */
+  onPlaybackConfirmed?: () => void;
+  /**
    * Offline captions bundled with a completed download. When present,
    * `useSubtitles` skips the Wyzie network search and loads these files.
    */
@@ -188,6 +195,7 @@ export const PlayerCore = ({
   onSelectStreamflixSource,
   extractorSubtitles = [],
   onPlaybackFailed,
+  onPlaybackConfirmed,
   localSubtitles,
   isLocalDownload = false,
   onPlayRecommendation,
@@ -938,6 +946,9 @@ export const PlayerCore = ({
     (e: OnLoadData) => {
       setStatus('ready');
       setDuration(e.duration);
+      // Only ever fired for the source this mount was created with: the screen
+      // remounts PlayerCore (key) on every source change.
+      onPlaybackConfirmed?.();
       if (
         sidecarReloadInFlightRef.current ||
         pendingSeekRef.current != null
@@ -948,7 +959,7 @@ export const PlayerCore = ({
         videoRef.current?.seek(resumeFrom);
       }
     },
-    [resumeFrom, finishSidecarResume],
+    [resumeFrom, finishSidecarResume, onPlaybackConfirmed],
   );
 
   const onError = useCallback(
