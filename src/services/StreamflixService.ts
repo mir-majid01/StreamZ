@@ -248,7 +248,6 @@ const VIDEASY_SERVERS = [
   { name: 'Breach', endpoint: 'm4uhd' },
   { name: 'Vyse', endpoint: 'hdmovie' },
 ] as const;
-
 const listVideasy = (req: StreamflixResolveRequest): StreamflixSource[] => {
   const tmdbId = Number(req.tmdbId);
   if (!Number.isFinite(tmdbId) || tmdbId <= 0) return [];
@@ -265,7 +264,9 @@ const listVideasy = (req: StreamflixResolveRequest): StreamflixSource[] => {
     return {
       id: `videasy-${slugId(s.name)}`,
       name: `${s.name} (Videasy)`,
-      language: 'English',
+      // No language is claimed: Videasy's sources endpoint does not say what
+      // audio language a server serves, so inventing 'English' here would be a
+      // promise the app cannot keep.
       kind: s.name === 'Cypher' ? 'file' : 'hls',
       uri: '',
       headers: {
@@ -338,6 +339,14 @@ const extractVideasy = async (
   };
 };
 
+/**
+ * Vidzee's own server numbering. `language` is carried only where the provider
+ * names a language for that index, and it stays the provider's claim: nothing
+ * here verifies the audio, so the pickers show it as a hint and never promise a
+ * language a title may not actually have. Index 8 is not in this table; no
+ * evidence in the repo or upstream says what it serves, so it is left unmapped
+ * rather than guessed at.
+ */
 const VIDZEE_SERVERS = [
   { name: 'Nflix', index: 0 },
   { name: 'Duke', index: 1 },
@@ -347,11 +356,11 @@ const VIDZEE_SERVERS = [
   { name: 'Drag', index: 5 },
   { name: 'Achilles', index: 6 },
   { name: 'Viet', index: 7 },
-  { name: 'Hindi', index: 9 },
-  { name: 'Bengali', index: 10 },
-  { name: 'Tamil', index: 11 },
-  { name: 'Telugu', index: 12 },
-  { name: 'Malayalam', index: 13 },
+  { name: 'Hindi', index: 9, language: 'Hindi' },
+  { name: 'Bengali', index: 10, language: 'Bengali' },
+  { name: 'Tamil', index: 11, language: 'Tamil' },
+  { name: 'Telugu', index: 12, language: 'Telugu' },
+  { name: 'Malayalam', index: 13, language: 'Malayalam' },
 ] as const;
 
 const listVidzee = (req: StreamflixResolveRequest): StreamflixSource[] => {
@@ -364,11 +373,7 @@ const listVidzee = (req: StreamflixResolveRequest): StreamflixSource[] => {
   return VIDZEE_SERVERS.map((s) => ({
     id: `vidzee-${slugId(s.name)}`,
     name: `${s.name} (Vidzee)`,
-    language: ['Hindi', 'Bengali', 'Tamil', 'Telugu', 'Malayalam'].includes(
-      s.name,
-    )
-      ? s.name
-      : 'English',
+    language: 'language' in s ? s.language : undefined,
     kind: s.name === 'Duke' ? 'file' : 'hls',
     uri: '',
     headers: {

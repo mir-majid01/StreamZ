@@ -14,6 +14,8 @@ import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 export interface StreamflixLoadingSource {
   id: string;
   name: string;
+  /** The provider's own label for this server's audio language, if it claims one. */
+  language?: string;
 }
 
 interface ServerLoadingSideNavProps {
@@ -177,6 +179,10 @@ export const ServerLoadingSideNav = ({
                           Failed
                         </Text>
                       </HStack>
+                    ) : s.language ? (
+                      <Text size="2xs" className="text-muted-foreground">
+                        {s.language}
+                      </Text>
                     ) : null}
                   </HStack>
                 </Focusable>

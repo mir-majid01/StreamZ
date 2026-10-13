@@ -89,6 +89,8 @@ const CATEGORY_LABELS: Record<SettingsCategory, string> = {
 export interface StreamflixSourceOption {
   id: string;
   name: string;
+  /** The provider's own label for this server's audio language, if it claims one. */
+  language?: string;
 }
 
 export interface AudioTrackOption {
@@ -341,6 +343,7 @@ export const PlayerSettingsDrawer = ({
                 <OptionRow
                   key={s.id}
                   label={s.name}
+                  hint={s.language}
                   active={s.id === activeStreamflixSourceId}
                   hasTVPreferredFocus={idx === 0}
                   onPress={() => {
