@@ -117,14 +117,14 @@ These are blockers, not caveats to write around:
   Pinning that in a policy would be theatre: the key is public, so it proves nothing about who built
   the file, and the pin would have to be broken the moment a real keystore appears. A release
   keystore, held in CI secrets rather than committed, has to come first.
-- **Local-module autolinking is unproven.** `modules/apk-integrity` (streaming SHA-256, package
-  name, certificate fingerprint) is written, but running the same resolver the Gradle plugin uses —
-  `expo-modules-autolinking resolve --platform android` — returns the same 20 packages with and
-  without it, including when `./modules` is passed explicitly. Making a committed `android/` project
-  pick up a local module may need a prebuild or a hand-edited `settings.gradle`; neither was done,
-  because both are the risky native changes this phase said to stop and report first. Until the
-  module actually compiles into the APK, integrity checks return `not_measured` and installation is
-  refused.
+- **The module has never been compiled.** Autolinking is now proven: `expo-modules-autolinking
+  resolve -p android` returns 21 packages and lists `apk-integrity` with
+  `sourceDir: modules/apk-integrity/android`. It previously returned 20 because my `build.gradle`
+  sat at the module root — the Android resolver only links a default project when
+  `android/build.gradle` exists (`platforms/android/android.js`, `isAndroidProject`). No prebuild and
+  no `settings.gradle` edit were needed. What is still unproven is that `ApkIntegrityModule.kt`
+  compiles and registers inside a real APK; only a CI build shows that. Until it does, integrity
+  checks return `not_measured` and installation is refused.
 - **Firestore rules are prepared, not deployed.** The `releasePolicy/{docId}` block in
   `firestore.rules` grants public read of exactly `releasePolicy/latest` (nothing else in the
   collection; `/config` stays sign-in only) and admin-only writes with shape validation. Deploying
