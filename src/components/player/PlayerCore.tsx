@@ -54,6 +54,7 @@ import {
 } from '@/src/components/player/UpNextOverlay';
 import { useControlsVisibility } from '@/src/components/player/useControlsVisibility';
 import { useTVRemote } from '@/src/components/player/useTVRemote';
+import { isRtlLanguage } from '@/src/constants/languages';
 import { useContinueWatching } from '@/src/hooks/useContinueWatching';
 import { useWatchSession } from '@/src/hooks/useWatchSession';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
@@ -1347,6 +1348,7 @@ export const PlayerCore = ({
         text={activeCue?.text ?? null}
         controlsVisible={visible}
         pipActive={pipActive}
+        rtl={isRtlLanguage(selectedWyzieTrack?.language ?? '')}
       />
 
       {!pipActive && seriesEnded && <SeriesEndOverlay />}

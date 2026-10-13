@@ -21,7 +21,28 @@ export const SUBTITLE_LANGUAGES: SubLanguage[] = [
   { code: 'zh', label: 'Chinese' },
   { code: 'ar', label: 'Arabic' },
   { code: 'hi', label: 'Hindi' },
+  { code: 'ur', label: 'Urdu' },
 ];
+
+/**
+ * Languages written in a right-to-left script, so captions need RTL layout.
+ *
+ * This is a property of the script, not of the region. Deliberately excluded:
+ * Devanagari/Tamil/Telugu/Bengali languages (`hi`, `ta`, `te`, `bn`), which are
+ * South-Asian but left-to-right, and `ku`/`sd`, which are written RTL in the
+ * Arabic script and LTR in Latin/Devanagari depending on variety — for those we
+ * cannot tell from an ISO 639-1 code alone, so we leave them alone.
+ */
+const RTL_LANGUAGE_CODES = new Set(['ar', 'he', 'fa', 'ur', 'ps', 'yi']);
+
+/** Whether a language tag (bare or region-qualified) needs RTL layout. */
+export const isRtlLanguage = (code: string): boolean => {
+  const base = String(code || '')
+    .trim()
+    .toLowerCase()
+    .split(/[-_]/)[0];
+  return RTL_LANGUAGE_CODES.has(base);
+};
 
 export const getLanguageLabel = (code: string): string =>
   SUBTITLE_LANGUAGES.find((l) => l.code === code)?.label ?? 'None';

@@ -19,12 +19,19 @@ interface SubtitleOverlayProps {
    * user's fontSize setting).
    */
   pipActive?: boolean;
+  /**
+   * Lay the caption out right-to-left. Urdu, Arabic, Hebrew and Persian are
+   * written RTL, and without this the bidi algorithm keeps Latin digits and
+   * punctuation on the wrong edge of the line.
+   */
+  rtl?: boolean;
 }
 
 export const SubtitleOverlay = ({
   text,
   controlsVisible = false,
   pipActive = false,
+  rtl = false,
 }: SubtitleOverlayProps) => {
   const { settings } = useSubtitleSettings();
 
@@ -60,6 +67,7 @@ export const SubtitleOverlay = ({
             color: settings.textColor,
             fontSize,
             fontWeight: settings.bold ? '700' : '400',
+            ...(rtl ? { writingDirection: 'rtl' as const } : null),
             ...(settings.textShadow
               ? {
                   textShadowColor: 'rgba(0,0,0,0.85)',

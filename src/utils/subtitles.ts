@@ -8,6 +8,10 @@ const parseTimestamp = (raw: string): number => {
   // Supports SRT (00:00:01,000) and VTT (00:00:01.000)
   const cleaned = raw.trim().replace(',', '.');
   const parts = cleaned.split(':');
+  // WebVTT also permits the shorter mm:ss.ttt form. Treating it as malformed
+  // would not fail loudly: both ends land on 0, `end > start` rejects every
+  // cue, and the track renders nothing at all.
+  if (parts.length === 2) parts.unshift('0');
   if (parts.length < 3) return 0;
   const hours = Number(parts[0]) || 0;
   const minutes = Number(parts[1]) || 0;

@@ -170,6 +170,12 @@ export const useSubtitles = ({
     const isLocal = selectedSourceKey.startsWith('local:');
     const uri = selectedSourceKey.slice(selectedSourceKey.indexOf(':') + 1);
 
+    // Drop the previous track's cues before fetching. Without this the old
+    // language stays on screen for the whole download, so switching from
+    // English to Hindi shows English captions over Hindi audio first — and if
+    // the new fetch fails, `catch` clears them only after that delay.
+    setCues([]);
+
     let cancelled = false;
     setLoadingCues(true);
 
