@@ -11,6 +11,7 @@ import { Button, ButtonIcon, ButtonText } from '@/components/ui/button';
 import { ScrollView } from '@/components/ui/scroll-view';
 import { Focusable } from '@/src/components/Focusable';
 import { usePlaybackSettings } from '@/src/hooks/usePlaybackSettings';
+import { usePlayerDebugSettings } from '@/src/hooks/usePlayerDebugSettings';
 import {
   FORWARD_BUFFER_STEP_SECONDS,
   MAX_FORWARD_BUFFER_SECONDS,
@@ -37,6 +38,7 @@ export const PlaybackPerformanceScreen = () => {
     effectiveForwardBufferSeconds,
     setForwardBufferSeconds,
   } = usePlaybackSettings();
+  const { smartPlayEnabled, setSmartPlayEnabled } = usePlayerDebugSettings();
 
   const isAuto = forwardBufferSeconds == null;
 
@@ -57,7 +59,7 @@ export const PlaybackPerformanceScreen = () => {
           <Icon as={ArrowLeft} size="xl" className="text-foreground" />
         </Focusable>
         <Heading size="xl" bold className="text-foreground">
-          Buffering
+          Playback
         </Heading>
       </HStack>
 
@@ -75,6 +77,51 @@ export const PlaybackPerformanceScreen = () => {
               </Text>
             </VStack>
           </HStack>
+
+          <VStack space="sm">
+            <Text className="text-muted-foreground">Smart Play</Text>
+            <Text size="sm" className="text-muted-foreground">
+              When a server hands back a stream that won&apos;t start, Smart
+              Play moves on to the next source, then the next server, until
+              something actually begins playing. Turn it off to stay on exactly
+              the server you picked — playback failures are then reported
+              instead of being fixed behind your back, and switching server by
+              hand still works.
+            </Text>
+
+            <HStack space="sm" className="mt-2">
+              <Button
+                size="sm"
+                variant={smartPlayEnabled ? 'default' : 'outline'}
+                onPress={() => setSmartPlayEnabled(true)}
+              >
+                <ButtonText
+                  className={
+                    smartPlayEnabled
+                      ? 'text-primary-foreground'
+                      : 'text-foreground'
+                  }
+                >
+                  Smart Play
+                </ButtonText>
+              </Button>
+              <Button
+                size="sm"
+                variant={!smartPlayEnabled ? 'default' : 'outline'}
+                onPress={() => setSmartPlayEnabled(false)}
+              >
+                <ButtonText
+                  className={
+                    !smartPlayEnabled
+                      ? 'text-primary-foreground'
+                      : 'text-foreground'
+                  }
+                >
+                  Only my server
+                </ButtonText>
+              </Button>
+            </HStack>
+          </VStack>
 
           <VStack space="sm">
             <Text className="text-muted-foreground">Forward buffer</Text>

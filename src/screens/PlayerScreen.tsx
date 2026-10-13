@@ -119,10 +119,12 @@ export const PlayerScreen = ({
   const roleRef = useRef(role);
   roleRef.current = role;
   const stayInRoomOnExitRef = useRef(true);
-  // Settings > "Debug video player" — when on, render the stream-resolving
-  // WebViewScraper full-screen and interactive instead of invisible, so you
-  // can watch exactly what the embed page is doing.
-  const { scraperDebugEnabled } = usePlayerDebugSettings();
+  // Player debug mode: when on, render the stream-resolving WebViewScraper
+  // full-screen and interactive instead of invisible, so you can watch exactly
+  // what the embed page is doing. Note that nothing in the shipped UI can turn
+  // this on yet — `setScraperDebugEnabled` has no control wired to it, so the
+  // flag stays off in practice until the Settings redesign exposes it.
+  const { scraperDebugEnabled, smartPlayEnabled } = usePlayerDebugSettings();
   const toast = useToast();
   const type: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
 
@@ -443,8 +445,17 @@ export const PlayerScreen = ({
   // Failure-driven: mark the current server as tried and move on to the
   // first server in the list not yet tried this cycle. Once every server
   // has failed, fall through to the "No video available" empty state.
+  //
+  // With Smart Play off this stops at the server that failed instead of
+  // quietly moving on, so the user's chosen server is never swapped out from
+  // under them — they can still switch by hand, and the empty state explains
+  // that only this server was tried.
   const tryNextServer = useCallback(
     (resumeFromSeconds: number) => {
+      if (!smartPlayEnabled) {
+        setNoSource(true);
+        return;
+      }
       const updated = new Set(triedServerIds).add(activeServer.id);
       const next = servers.find((s) => !updated.has(s.id));
       setTriedServerIds(updated);
@@ -454,7 +465,13 @@ export const PlayerScreen = ({
       }
       switchToServer(next.id, resumeFromSeconds);
     },
-    [servers, activeServer.id, triedServerIds, switchToServer],
+    [
+      smartPlayEnabled,
+      servers,
+      activeServer.id,
+      triedServerIds,
+      switchToServer,
+    ],
   );
 
   // On scrape failure/timeout, try the next configured server before giving
@@ -572,10 +589,14 @@ export const PlayerScreen = ({
         }
         const preferred =
           listed.find((s) => s.id === preferredStreamflixSourceId) ?? listed[0];
-        const order = [
-          preferred,
-          ...listed.filter((s) => s.id !== preferred.id),
-        ].filter((s) => !triedStreamflixIdsRef.current.has(s.id));
+        // The order is the host's own listing, with the chosen source first.
+        // Nothing is re-ranked by claimed quality/resolution/language, because
+        // no verified per-source signal exists for these providers to rank on.
+        const order = (
+          smartPlayEnabled
+            ? [preferred, ...listed.filter((s) => s.id !== preferred.id)]
+            : [preferred]
+        ).filter((s) => !triedStreamflixIdsRef.current.has(s.id));
         for (const candidate of order) {
           if (cancelled || resolvedRef.current) return;
           setTryingStreamflixSource({ id: candidate.id, name: candidate.name });
@@ -628,6 +649,7 @@ export const PlayerScreen = ({
     source,
     noSource,
     waitingForHost,
+    smartPlayEnabled,
     usingRestResolver,
     usingStreamflix,
     usingFlixquest,
@@ -667,7 +689,11 @@ export const PlayerScreen = ({
         (s) => s.id === activeStreamflixSourceId,
       );
       setLastFailure({ label: failing?.name ?? null, reason });
-      if (usingRestResolver && activeStreamflixSourceId) {
+      if (
+        smartPlayEnabled &&
+        usingRestResolver &&
+        activeStreamflixSourceId
+      ) {
         markTriedStreamflix(activeStreamflixSourceId);
         const next = streamflixSources.find(
           (s) => !triedStreamflixIdsRef.current.has(s.id),
@@ -682,6 +708,7 @@ export const PlayerScreen = ({
       tryNextServer(resumeFromSeconds);
     },
     [
+      smartPlayEnabled,
       usingRestResolver,
       activeStreamflixSourceId,
       streamflixSources,
@@ -1025,11 +1052,13 @@ export const PlayerScreen = ({
             No video available
           </Text>
           <Text size="sm" className="mt-2 text-center text-muted-foreground">
-            {lastFailure
-              ? 'Some servers returned a stream, but none of them started playing.'
-              : servers.length > 1
-                ? "We couldn't find a playable stream from any configured server."
-                : "We couldn't find a playable stream from the current server. Try a different server from Settings."}
+            {!smartPlayEnabled
+              ? `We couldn't play this from ${activeServer.name}. Smart Play is off, so no other server was tried — switch server in Settings or turn Smart Play on.`
+              : lastFailure
+                ? 'Some servers returned a stream, but none of them started playing.'
+                : servers.length > 1
+                  ? "We couldn't find a playable stream from any configured server."
+                  : "We couldn't find a playable stream from the current server. Try a different server from Settings."}
           </Text>
         </Center>
         <Pressable

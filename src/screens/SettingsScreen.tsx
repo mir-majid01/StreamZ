@@ -281,7 +281,7 @@ export const SettingsScreen = () => {
           />
           <MenuRow
             icon={Gauge}
-            label="Buffering"
+            label="Playback"
             value={`${effectiveForwardBufferSeconds}s${forwardBufferSeconds == null ? ' · Auto' : ''} · ${formatMemoryGb(deviceTotalMemory)} RAM`}
             onPress={() => navigation.navigate('PlaybackPerformance')}
           />
