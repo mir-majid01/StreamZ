@@ -22,6 +22,7 @@ import { PlaybackPerformanceScreen } from '@/src/screens/PlaybackPerformanceScre
 import { DisclaimerScreen } from '@/src/screens/DisclaimerScreen';
 import { CreditsScreen } from '@/src/screens/CreditsScreen';
 import { FinishedMoviesScreen } from '@/src/screens/FinishedMoviesScreen';
+import { MyListScreen } from '@/src/screens/MyListScreen';
 import { TabNavigator } from './TabNavigator';
 import { TVNavigator } from './TVNavigator';
 import { JoinPartyScreen } from '@/src/screens/JoinPartyScreen';
@@ -155,6 +156,7 @@ export const AppNavigator = () => {
         <Stack.Screen name="Disclaimer" component={DisclaimerScreen} />
         <Stack.Screen name="Credits" component={CreditsScreen} />
         <Stack.Screen name="FinishedMovies" component={FinishedMoviesScreen} />
+        <Stack.Screen name="MyList" component={MyListScreen} />
         <Stack.Screen name="JoinParty" component={JoinPartyScreen} />
         <Stack.Screen
           name="Player"

@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Captions,
   CheckCircle2,
+  Bookmark,
   Download,
   Gauge,
   Info,
@@ -43,6 +44,7 @@ import { getRegionName, useCatalogRegion } from '@/src/hooks/useCatalogRegion';
 import { UpdateModal } from '@/src/components/UpdateModal';
 import { updateService } from '@/src/services/UpdateService';
 import { useFinishedMovies } from '@/src/hooks/useFinishedMovies';
+import { useMyList } from '@/src/hooks/useMyList';
 import { usePlaybackSettings } from '@/src/hooks/usePlaybackSettings';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
 import { PARTY_DISPLAY_NAME_MAX } from '@/src/party/displayName';
@@ -57,6 +59,7 @@ export const SettingsScreen = () => {
   const navigation = useNavigation<Nav>();
   const { activeServer } = useServers();
   const { entries: finishedMovies } = useFinishedMovies();
+  const { items: myList } = useMyList();
   const { forwardBufferSeconds, effectiveForwardBufferSeconds, deviceTotalMemory } =
     usePlaybackSettings();
   const { settings: subtitleSettings } = useSubtitleSettings();
@@ -152,6 +155,12 @@ export const SettingsScreen = () => {
             label="Buffering"
             value={`${effectiveForwardBufferSeconds}s${forwardBufferSeconds == null ? ' · Auto' : ''} · ${formatMemoryGb(deviceTotalMemory)} RAM`}
             onPress={() => navigation.navigate('PlaybackPerformance')}
+          />
+          <MenuRow
+            icon={Bookmark}
+            label="My List"
+            value={`${myList.length} saved`}
+            onPress={() => navigation.navigate('MyList')}
           />
           <MenuRow
             icon={CheckCircle2}

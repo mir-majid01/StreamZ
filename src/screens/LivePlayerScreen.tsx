@@ -54,6 +54,9 @@ export const LivePlayerScreen = ({
       restoreOrientation();
       if (Platform.OS === 'android') {
         NavigationBar.setHidden(false);
+        // See PlayerScreen: the declarative <StatusBar hidden/> can leave the
+        // bar hidden after unmount on Android, zeroing insets.top downstream.
+        StatusBar.setHidden(false, 'fade');
       }
     };
   }, []);

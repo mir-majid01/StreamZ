@@ -12,9 +12,11 @@ import Video, {
   type OnLoadData,
   type OnProgressData,
   type OnPictureInPictureStatusChangedData,
+  type OnTextTracksData,
   type OnVideoErrorData,
   type ReactVideoSource,
   type SelectedTrack,
+  type TextTrack,
   type TextTracks,
   type VideoRef,
 } from 'react-native-video';
@@ -274,6 +276,20 @@ export const PlayerCore = ({
     setAudioTracks(data.audioTracks ?? []);
   }, []);
 
+  // Subtitle tracks the *stream itself* carries (embedded HLS/MP4 subtitle
+  // groups). These are surfaced by react-native-video's onTextTracks and
+  // selected natively via selectedTextTrack {type:'index'} — distinct from the
+  // sidecar/Wyzie track below, which is a separate .srt/.vtt file we convert and
+  // attach. The Subtitles menu lists these verbatim: nothing is offered that the
+  // player did not report.
+  const [textTracks, setTextTracks] = useState<TextTrack[]>([]);
+  const [selectedTextIndex, setSelectedTextIndex] = useState<number | null>(
+    null,
+  );
+  const onTextTracks = useCallback((data: OnTextTracksData) => {
+    setTextTracks(data.textTracks ?? []);
+  }, []);
+
   const extraSubtitleTracks = useMemo<WyzieSubtitle[]>(
     () =>
       extractorSubtitles
@@ -383,6 +399,50 @@ export const PlayerCore = ({
     label: `${t.display}${t.isHearingImpaired ? ' (CC)' : ''}`,
   }));
   const subtitlesActive = wyzieSelectedId != null;
+
+  // Embedded (stream-carried) subtitle tracks lead the menu, keyed by the
+  // player's own index so selection maps straight back to selectedTextTrack.
+  const EMBEDDED_PREFIX = 'embedded:';
+  const embeddedSubtitleOptions = textTracks.map((t) => ({
+    id: `${EMBEDDED_PREFIX}${t.index}`,
+    label: t.title || t.language || `Subtitle ${t.index + 1}`,
+  }));
+
+  // One flat list feeds the drawer: embedded first, then sidecar/Wyzie. Each id
+  // is unambiguous, so a single handler routes a pick to the right subsystem.
+  const allSubtitleOptions = useMemo(
+    () => [...embeddedSubtitleOptions, ...subtitleTrackOptions],
+    [embeddedSubtitleOptions, subtitleTrackOptions],
+  );
+
+  // The drawer highlights one row: whichever subsystem currently holds the
+  // selection. Embedded wins if the user picked one, else the Wyzie/sidecar id.
+  const selectedSubtitleId =
+    selectedTextIndex != null
+      ? `${EMBEDDED_PREFIX}${selectedTextIndex}`
+      : wyzieSelectedId;
+
+  const handleSelectSubtitle = useCallback(
+    (id: string | null) => {
+      if (id == null) {
+        // "Off": clear both subsystems.
+        setSelectedTextIndex(null);
+        selectWyzieTrack(null);
+        return;
+      }
+      if (id.startsWith(EMBEDDED_PREFIX)) {
+        const index = Number(id.slice(EMBEDDED_PREFIX.length));
+        setSelectedTextIndex(Number.isFinite(index) ? index : null);
+        // Embedded and sidecar can't both render; drop any sidecar selection.
+        selectWyzieTrack(null);
+        return;
+      }
+      // A sidecar/Wyzie track: select it and clear any embedded override.
+      setSelectedTextIndex(null);
+      selectWyzieTrack(id);
+    },
+    [selectWyzieTrack],
+  );
 
   // Stable ids for native sidecar effects — avoid refetch/cancel races when
   // the track object identity changes but the selection did not.
@@ -570,12 +630,22 @@ export const PlayerCore = ({
   }, [useNativeSidecar, nativeVttUri, nativeVttTrackId, selectedWyzieTrack]);
 
   const selectedTextTrack: SelectedTrack | undefined = useMemo(() => {
+    // An embedded (stream-carried) pick wins: select it by the player's own
+    // index. This is native rendering and needs no source rewrite.
+    if (selectedTextIndex != null) {
+      return { type: SelectedTrackType.INDEX, value: selectedTextIndex };
+    }
     if (!useNativeSidecar) return undefined;
     if (!selectedWyzieTrack || !sidecarTextTracks?.length) {
       return { type: SelectedTrackType.DISABLED };
     }
     return { type: SelectedTrackType.INDEX, value: 0 };
-  }, [useNativeSidecar, selectedWyzieTrack, sidecarTextTracks]);
+  }, [
+    selectedTextIndex,
+    useNativeSidecar,
+    selectedWyzieTrack,
+    sidecarTextTracks,
+  ]);
 
   // -------------------------------------------------------------------------
   // Player state (mirrors what expo-video's `useEvent`/`player.*` used to
@@ -1218,6 +1288,7 @@ export const PlayerCore = ({
           onLoadStart={() => setStatus('loading')}
           onLoad={onLoad}
           onAudioTracks={onAudioTracks}
+          onTextTracks={onTextTracks}
           selectedAudioTrack={
             selectedAudioIndex != null
               ? { type: SelectedTrackType.INDEX, value: selectedAudioIndex }
@@ -1388,11 +1459,11 @@ export const PlayerCore = ({
         onSelectAspect={setAspect}
         playbackRate={playbackRate}
         onSelectSpeed={setPlaybackRate}
-        subtitleTracks={subtitleTrackOptions}
-        selectedSubtitleId={wyzieSelectedId}
+        subtitleTracks={allSubtitleOptions}
+        selectedSubtitleId={selectedSubtitleId}
         subtitlesLoading={loadingWyzieTracks}
         subtitlesError={wyzieError}
-        onSelectSubtitle={selectWyzieTrack}
+        onSelectSubtitle={handleSelectSubtitle}
         subtitleOffsetSeconds={subtitleOffsetSeconds}
         onChangeSubtitleOffset={setSubtitleOffsetSeconds}
       />

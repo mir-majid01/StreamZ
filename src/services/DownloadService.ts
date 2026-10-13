@@ -6,7 +6,10 @@ import type { ReactVideoSource } from 'react-native-video';
 import { getTitle, type MediaItem } from '@/src/types';
 import { originOf } from '@/src/utils/streamUrl';
 import type { PlaybackServer } from '@/src/hooks/useServers';
-import type { ServerResolver } from '@/src/services/playbackHeaders';
+import {
+  WEBVIEW_USER_AGENT,
+  type ServerResolver,
+} from '@/src/services/playbackHeaders';
 import { STREAMFLIX_PLAYBACK_HEADERS } from '@/src/services/StreamflixService';
 import {
   fetchHlsVariants,
@@ -263,6 +266,9 @@ const buildHeaders = (
       : {
           Referer: `${serverUrl}/`,
           Origin: originOf(serverUrl),
+          // Webview-resolver media hosts reject a UA-less download request even
+          // though the WebView (same UA) played them — see playbackHeaders.
+          'User-Agent': WEBVIEW_USER_AGENT,
         };
 
 // ---------------------------------------------------------------------------
@@ -546,9 +552,14 @@ class DownloadServiceImpl {
     this.persist();
     this.emit();
 
-    // Kick off pipeline async — do not block the caller.
+    // Kick off pipeline async — do not block the caller. A rejection here means
+    // downloadHls/downloadSingleFile threw before setting their own terminal
+    // status; without this the job would sit at "downloading" forever with no
+    // explanation. Fail it loudly so the UI shows why.
     void this.process(id, opts).catch((e) => {
       log('unhandled process error for', id, e);
+      const message = e instanceof Error ? e.message : String(e);
+      this.updateJob(id, { status: 'failed', error: message });
     });
 
     return job;
@@ -802,6 +813,11 @@ class DownloadServiceImpl {
       /* noop */
     }
 
+    let lastError = '';
+    // The byte total the server advertised (via onProgress). Used after the
+    // transfer to catch a truncated body that `assertPlausibleDownload`'s size
+    // floor alone would wave through as "complete".
+    let reportedTotal = 0;
     for (let attempt = 1; attempt <= SEGMENT_RETRIES; attempt++) {
       if (this.cancelled.has(id)) return;
       const controller = new AbortController();
@@ -813,6 +829,7 @@ class DownloadServiceImpl {
           signal: controller.signal,
           onProgress: ({ bytesWritten, totalBytes }) => {
             if (this.cancelled.has(id)) return;
+            if (totalBytes > 0) reportedTotal = totalBytes;
             this.updateJob(id, {
               bytesWritten,
               totalBytes: totalBytes > 0 ? totalBytes : undefined,
@@ -820,6 +837,18 @@ class DownloadServiceImpl {
           },
         });
         await assertPlausibleDownload(destFile, 'file');
+        // Server told us how big the file is; if what landed is materially
+        // smaller, the connection dropped mid-transfer. Treat that as a failure
+        // (retryable) rather than a completed-but-corrupt download.
+        if (
+          reportedTotal > 0 &&
+          destFile.size != null &&
+          destFile.size < reportedTotal * 0.95
+        ) {
+          throw new Error(
+            `Incomplete download (${destFile.size} of ${reportedTotal} bytes)`,
+          );
+        }
         this.updateJob(id, {
           status: 'completed',
           completedSegments: 1,
@@ -827,6 +856,7 @@ class DownloadServiceImpl {
         });
         return;
       } catch (e) {
+        lastError = e instanceof Error ? e.message : String(e);
         try {
           if (destFile.exists) destFile.delete();
         } catch {
@@ -845,7 +875,10 @@ class DownloadServiceImpl {
     }
 
     if (this.cancelled.has(id)) return;
-    this.updateJob(id, { status: 'failed', error: 'Download failed' });
+    this.updateJob(id, {
+      status: 'failed',
+      error: lastError || 'Download failed',
+    });
   }
 
   private async downloadHls(

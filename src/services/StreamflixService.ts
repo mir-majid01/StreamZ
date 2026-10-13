@@ -271,6 +271,11 @@ const listVideasy = (req: StreamflixResolveRequest): StreamflixSource[] => {
       headers: {
         Referer: 'https://player.videasy.net/',
         Origin: 'https://player.videasy.net',
+        // The media CDN is the same one the browser hits; without a UA OkHttp's
+        // download request is rejected (non-2xx) even though playback through the
+        // WebView succeeded — the WebView supplies its own UA. Match it here so
+        // the offline download presents identical headers.
+        'User-Agent': USER_AGENT,
       },
       subtitles: [],
       extractor: 'videasy' as const,
@@ -324,7 +329,11 @@ const extractVideasy = async (
   return {
     ...source,
     uri: url,
-    kind: source.kind,
+    // Re-derive from the actual media URL. The list-time guess ("Cypher→file,
+    // else hls") is wrong for the many servers that hand back a direct .mp4,
+    // and a wrong 'hls' makes the downloader fetch a playlist, find no segments,
+    // and fail. The URL extension is authoritative.
+    kind: partySourceKind(url),
     subtitles,
   };
 };
@@ -444,7 +453,9 @@ const extractVidzee = async (
     .filter((t) => t.url)
     .map((t) => ({ label: t.lang || 'Unknown', file: t.url as string }));
   log('vidzee: ok', source.name, shortUrl(url), 'subs', subtitles.length);
-  return { ...source, uri: url, subtitles };
+  // kind re-derived from the resolved URL — see extractVideasy for why the
+  // list-time guess can't be trusted.
+  return { ...source, uri: url, kind: partySourceKind(url), subtitles };
 };
 
 const listSources = async (

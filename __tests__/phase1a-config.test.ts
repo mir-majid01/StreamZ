@@ -42,8 +42,8 @@ describe('brand config', () => {
     expect(LEGAL.sampleCredit).toMatch(/Blender Foundation/);
   });
 
-  it('disables deferred surfaces in Phase 1A', () => {
-    expect(FEATURES).toEqual({ liveTv: false, watchParty: false, tvLayout: false, updateChecker: false });
+  it('keeps the deferred surfaces off (Live TV is now restored)', () => {
+    expect(FEATURES).toEqual({ liveTv: true, watchParty: false, tvLayout: false, updateChecker: false });
   });
 });
 
@@ -53,8 +53,8 @@ describe('brand config', () => {
  * reintroduces an ungated entry point fails here.
  */
 describe('feature flags gate the surfaces they name', () => {
-  it('hides Live TV even with a playlist configured', () => {
-    expect(LIVE_TV_CONFIG.enabled).toBe(false);
+  it('shows Live TV now that its flag is on and the playlist is configured', () => {
+    expect(LIVE_TV_CONFIG.enabled).toBe(true);
   });
 
   it('hides the watch party even with a party server configured', () => {

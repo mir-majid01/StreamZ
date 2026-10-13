@@ -1,23 +1,32 @@
-import { Dimensions, PixelRatio, ScaledSize } from 'react-native';
-
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+import { Dimensions, ScaledSize } from 'react-native';
 
 /**
- * Tablet detection based on physical pixel dimensions and logical size.
- * Mirrors common RN heuristics so layouts can widen on larger screens.
+ * Tablet detection. Uses Android's smallest-width rule: a device is "large"
+ * when its SHORTER logical edge (dp) is >= 600dp (sw600dp). That is the same
+ * threshold Google uses to decide a window can show tablet layouts, and unlike
+ * a physical-pixel check it is density-independent and orientation-independent:
+ * a phone stays a phone whether it is held portrait or rotated to landscape,
+ * because its short edge is ~360-420dp either way.
+ *
+ * The previous version also treated any edge >= 1000 *physical* px as a tablet,
+ * which mis-classified nearly every modern phone (a 1224px-wide panel clears it)
+ * as a tablet — which in turn unlocked the player's orientation on exit and
+ * widened the poster grid from 3 to 4 columns, corrupting the layout.
  */
+const TABLET_SMALLEST_WIDTH_DP = 600;
+
 export const isTablet = (
-  width: number = SCREEN_WIDTH,
-  height: number = SCREEN_HEIGHT,
+  width?: number,
+  height?: number,
 ): boolean => {
-  const pixelDensity = PixelRatio.get();
-  const adjustedWidth = width * pixelDensity;
-  const adjustedHeight = height * pixelDensity;
-  return (
-    adjustedWidth >= 1000 ||
-    adjustedHeight >= 1000 ||
-    (Math.min(width, height) >= 600 && Math.max(width, height) >= 900)
-  );
+  // Read live when called without an explicit size, so this never reports a
+  // stale orientation captured at module load.
+  if (width === undefined || height === undefined) {
+    const w = Dimensions.get('window');
+    width = w.width;
+    height = w.height;
+  }
+  return Math.min(width, height) >= TABLET_SMALLEST_WIDTH_DP;
 };
 
 export type DeviceKind = 'phone' | 'tablet' | 'tv';

@@ -262,6 +262,7 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
               deviceKind={deviceKind}
               screenWidth={width}
               onItemPress={openDetail}
+              onViewMore={() => navigation.navigate('MyList')}
               selectionEnabled={myListSelecting}
               onEnterSelection={() => setMyListSelecting(true)}
               onExitSelection={() => setMyListSelecting(false)}

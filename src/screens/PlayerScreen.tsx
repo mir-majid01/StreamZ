@@ -179,6 +179,12 @@ export const PlayerScreen = ({
       restoreOrientation();
       if (Platform.OS === 'android') {
         NavigationBar.setHidden(false);
+        // Un-hide the status bar imperatively. The declarative <StatusBar
+        // hidden/> above *should* restore on unmount, but on Android its
+        // hidden state can survive the pop, leaving insets.top === 0 and
+        // shifting the Home header/tab bar up. Setting it false here is the
+        // same effect the rest of the app already gets from expo-status-bar.
+        StatusBar.setHidden(false, 'fade');
       }
     };
   }, []);
