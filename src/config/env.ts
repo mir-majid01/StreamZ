@@ -80,14 +80,54 @@ export const GOOGLE_WEB_CLIENT_ID =
   process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID?.trim() ||
   '283831382421-edj7c7vbvl8m2ksmuan5o318d7lee7ql.apps.googleusercontent.com';
 
+/**
+ * Offline grace, in hours, before a cached mandatory-release policy stops
+ * gating the app. Clamped because a typo here is the difference between "the
+ * Firestore outage cost the user an afternoon" and "the app can never be
+ * opened again without the publisher's server".
+ */
+const offlineGraceMs = (): number => {
+  const raw = process.env.EXPO_PUBLIC_UPDATE_OFFLINE_GRACE_HOURS?.trim();
+  const hours = raw === undefined || raw === '' ? 72 : Number(raw);
+  if (!Number.isFinite(hours) || hours < 0) return 72 * 3_600_000;
+  return Math.min(Math.floor(hours), 168) * 3_600_000;
+};
+
+/**
+ * In-app updates. There is deliberately **no** built-in default repository:
+ * a hardcoded owner/name is what made the upstream project's APK downloadable
+ * from a StreamZ build. The updater is inert until the owner names their own
+ * releases through the environment, and `FEATURES.updateChecker` must be
+ * flipped separately — either one alone keeps it off.
+ */
 export const UPDATE_CONFIG = {
-  OWNER: process.env.EXPO_PUBLIC_UPDATE_REPO_OWNER || 'sheeshcake',
-  REPO: process.env.EXPO_PUBLIC_UPDATE_REPO_NAME || 'Flickv4',
+  OWNER: process.env.EXPO_PUBLIC_UPDATE_REPO_OWNER?.trim() ?? '',
+  REPO: process.env.EXPO_PUBLIC_UPDATE_REPO_NAME?.trim() ?? '',
   API_BASE_URL: 'https://api.github.com',
   /**
-   * Off in Phase 1A. This polls a GitHub repo's releases and then hands the APK straight to
-   * the package installer, so with the defaults it would offer a StreamZ user upstream
-   * Flick's build. It stays disabled until the owner points it at their own releases.
+   * GitHub Releases are only a source of release *notes and a download URL*.
+   * Whether an update is mandatory, and what makes a downloaded APK
+   * trustworthy, is decided by the Firestore release-policy document — because
+   * a repository the app can read is not an authority over its own version
+   * floor.
+   */
+  POLICY_COLLECTION: 'releasePolicy',
+  POLICY_DOCUMENT: 'latest',
+  /**
+   * How long a cached policy may still gate the app after Firestore becomes
+   * unreachable. Bounded on purpose: long enough that a flight or an outage
+   * does not lock a paying user out, short enough that a pulled mandatory
+   * release is obeyed again the next time the network is up. Only an
+   * `unreachable` outcome may use the cache — a refusal, a missing document, or
+   * a malformed one never does.
+   */
+  OFFLINE_GRACE_MS: offlineGraceMs(),
+  /** Bounded wait for the policy read; a hung Firestore call must not hang boot. */
+  POLICY_TIMEOUT_MS: 8000,
+  /**
+   * Off until the whole verification chain (policy published, checksum in CI,
+   * native integrity check green on device) passes. `configured` is the second
+   * gate: an enabled flag with no repository named is still no updater.
    */
   enabled: FEATURES.updateChecker,
   /** Minimum hours between automatic update checks. */
@@ -95,3 +135,11 @@ export const UPDATE_CONFIG = {
   /** Delay in ms after mount before the first check, so app boot is snappy. */
   INITIAL_CHECK_DELAY_MS: 2000,
 } as const;
+
+/** True only when the owner has actually named a repository of their own. */
+export const updateRepoConfigured = (): boolean =>
+  UPDATE_CONFIG.OWNER.length > 0 && UPDATE_CONFIG.REPO.length > 0;
+
+/** Both conditions, so no call site has to remember that the flag alone is not enough. */
+export const updatesActive = (): boolean =>
+  UPDATE_CONFIG.enabled && updateRepoConfigured();

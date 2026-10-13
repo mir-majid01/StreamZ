@@ -6,7 +6,7 @@ import {
   type DownloadTask,
 } from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
-import { UPDATE_CONFIG } from '@/src/config/env';
+import { UPDATE_CONFIG, updateRepoConfigured } from '@/src/config/env';
 import {
   getAppVersion,
   getInstalledAppVersion,
@@ -127,14 +127,22 @@ class UpdateService {
   /**
    * Fetch the latest non-draft, non-prerelease release from GitHub. Returns
    * `null` on any network/HTTP error so callers can silently skip.
+   *
+   * With no repository named in the environment there is nothing to ask, and
+   * asking anyway is how a StreamZ build would end up offering somebody
+   * else's APK.
    */
   async getLatestRelease(): Promise<GitHubRelease | null> {
+    if (!updateRepoConfigured()) {
+      log('no update repository configured, skipping');
+      return null;
+    }
     const url = `${UPDATE_CONFIG.API_BASE_URL}/repos/${UPDATE_CONFIG.OWNER}/${UPDATE_CONFIG.REPO}/releases/latest`;
     try {
       const res = await fetch(url, {
         headers: {
           Accept: 'application/vnd.github.v3+json',
-          'User-Agent': 'Flick-App',
+          'User-Agent': 'StreamZ',
         },
       });
       if (!res.ok) {

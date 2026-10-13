@@ -1,0 +1,7 @@
+{
+  "name": "apk-integrity",
+  "version": "0.1.0",
+  "description": "Verifies a downloaded APK's digest, package name, and signing certificate before the installer is offered.",
+  "main": "src/index.ts",
+  "private": true
+}

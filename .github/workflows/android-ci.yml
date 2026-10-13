@@ -68,6 +68,12 @@ jobs:
             printf 'EXPO_PUBLIC_TMDB_BASE_URL=%s\n' "${EXPO_PUBLIC_TMDB_BASE_URL:-https://api.themoviedb.org/3}"
             printf 'EXPO_PUBLIC_TMDB_IMAGE_BASE_URL=%s\n' "${EXPO_PUBLIC_TMDB_IMAGE_BASE_URL:-https://image.tmdb.org/t/p/w500}"
             printf 'EXPO_PUBLIC_WYZIE_BASE_URL=%s\n' "${EXPO_PUBLIC_WYZIE_BASE_URL:-https://sub.wyzie.io}"
+            # A repository owner/name is public information, not a secret, but it decides
+            # whose APK an updater would offer — so it is named here rather than baked into
+            # the source, and it names this project. The updater stays inert while
+            # FEATURES.updateChecker is false regardless of what is set below.
+            printf 'EXPO_PUBLIC_UPDATE_REPO_OWNER=%s\n' "${EXPO_PUBLIC_UPDATE_REPO_OWNER:-mir-majid01}"
+            printf 'EXPO_PUBLIC_UPDATE_REPO_NAME=%s\n' "${EXPO_PUBLIC_UPDATE_REPO_NAME:-StreamZ}"
             for k in EXPO_PUBLIC_TMDB_API_KEY EXPO_PUBLIC_WYZIE_API_KEY EXPO_PUBLIC_WATCH_PARTY_URL; do
               eval "v=\${$k}"
               if [ -n "$v" ]; then printf '%s=%s\n' "$k" "$v"; fi
@@ -86,11 +92,56 @@ jobs:
             -Dorg.gradle.jvmargs=-Xmx3072m \
             -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
 
+      # P20: a release policy is only meaningful if the checksum describes the exact
+      # bytes this run produced. `sha256sum` streams the file, so a ~40 MB APK never
+      # has to be loaded into JavaScript memory, and the step refuses to continue if
+      # the digest is missing, the wrong length, or not hex — a placeholder or a
+      # copied-out value from an earlier release is how a stale checksum ships.
+      - name: Digest the APK this run built
+        id: apk_digest
+        run: |
+          set -euo pipefail
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          if [ ! -s "$APK" ]; then
+            echo "::error::no APK at $APK — refusing to publish a checksum"
+            exit 1
+          fi
+          DIGEST="$(sha256sum "$APK" | awk '{print $1}')"
+          case "$DIGEST" in
+            ''|*[!0-9a-f]*)
+              echo "::error::digest is not 64 lowercase hex characters: '$DIGEST'"
+              exit 1
+              ;;
+          esac
+          if [ "${#DIGEST}" -ne 64 ]; then
+            echo "::error::digest has length ${#DIGEST}, expected 64"
+            exit 1
+          fi
+          BYTES="$(stat -c %s "$APK")"
+          printf '%s  app-release.apk\n' "$DIGEST" > "$APK.sha256"
+          printf 'sha256=%s\nbytes=%s\n' "$DIGEST" "$BYTES" >> "$GITHUB_OUTPUT"
+          echo "built APK sha256=$DIGEST size=$BYTES"
+
+      - name: Verify the digest file this run produced
+        run: |
+          set -euo pipefail
+          sha256sum -c android/app/build/outputs/apk/release/app-release.apk.sha256
+
       - uses: actions/upload-artifact@v4
         with:
           name: streamz-release-${{ github.run_number }}
           path: android/app/build/outputs/apk/release/app-release.apk
           retention-days: 7
+          if-no-files-found: error
+
+      # Kept in its own artifact so the checksum cannot be swapped for another run's:
+      # both names carry the same run number, and a build that produced no digest
+      # fails here instead of shipping an unverifiable APK.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamz-release-${{ github.run_number }}-sha256
+          path: android/app/build/outputs/apk/release/app-release.apk.sha256
+          retention-days: 30
           if-no-files-found: error
 
   verify:

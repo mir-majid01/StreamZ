@@ -78,9 +78,18 @@ describe('parseReleasePolicy', () => {
     ).toBeNull();
   });
 
-  it('allows the signing certificate to be absent but not malformed', () => {
-    expect(parseReleasePolicy(doc({ signingCertSha256: null }))?.signingCertSha256).toBeNull();
+  it('refuses a policy that does not name a signing certificate', () => {
+    // Absent and malformed are both refusals: a policy with no stated signer
+    // would leave the installer checking a digest that any key could produce.
+    expect(parseReleasePolicy(doc({ signingCertSha256: null }))).toBeNull();
+    expect(parseReleasePolicy(doc({ signingCertSha256: '' }))).toBeNull();
     expect(parseReleasePolicy(doc({ signingCertSha256: 'zz' }))).toBeNull();
+    expect(parseReleasePolicy(doc({ signingCertSha256: 'b'.repeat(63) }))).toBeNull();
+  });
+
+  it('accepts an upper-case certificate the same way it does a digest', () => {
+    const parsed = parseReleasePolicy(doc({ signingCertSha256: 'B'.repeat(64) }));
+    expect(parsed?.signingCertSha256).toBe(CERT);
   });
 });
 
@@ -214,14 +223,15 @@ describe('evaluateApkIntegrity', () => {
     ).toBe('size_mismatch');
   });
 
-  it('skips the signature rule only when the publisher never set one', () => {
-    const noCert = { ...POLICY, signingCertSha256: null };
+  it('refuses a file signed by a certificate other than the published one', () => {
+    // The sheeshcake/Flickv4 hazard in the other direction: a real, correctly
+    // hashed APK that was signed by somebody else's key.
     expect(
       evaluateApkIntegrity({
-        policy: noCert,
-        actual: { ...measured, signingCertSha256: null },
+        policy: POLICY,
+        actual: { ...measured, signingCertSha256: 'c'.repeat(64) },
         expectedPackageName: 'stream.z',
-      }).allowed,
-    ).toBe(true);
+      }).reason,
+    ).toBe('signature_mismatch');
   });
 });

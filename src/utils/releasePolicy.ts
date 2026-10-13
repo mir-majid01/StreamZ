@@ -1,9 +1,10 @@
 import { compareVersions } from '@/src/utils/versions';
 
 /**
- * The release policy as published in Firestore `config/release`. Everything
- * here is information the app already needs in order to offer an update, so
- * the document holds no secrets and may be read before the user signs in.
+ * The release policy as published in Firestore `releasePolicy/latest`.
+ * Everything here is information the app already needs in order to offer an
+ * update, so the document holds no secrets and is the one document the rules
+ * let an unsigned-in client read.
  */
 export interface ReleasePolicy {
   /** Versions below this one must update before the app is usable. */
@@ -18,11 +19,12 @@ export interface ReleasePolicy {
   /** Exact byte count of the APK, or null when the publisher did not state one. */
   sizeBytes: number | null;
   /**
-   * SHA-256 of the DER signing certificate the APK must be signed by. When the
-   * publisher omits it, integrity checks cannot run and installation is refused
-   * rather than allowed on a weaker rule.
+   * SHA-256 of the DER signing certificate the APK must be signed by. Required:
+   * a policy that names no certificate leaves the installer verifying a digest
+   * against a file anybody could have produced with any key, so the publish
+   * step has to state the identity and the device has to match it.
    */
-  signingCertSha256: string | null;
+  signingCertSha256: string;
 }
 
 export type PolicyOutcome =
@@ -71,21 +73,6 @@ const asHex64 = (v: unknown): string | null => {
   return HEX64.test(lower) ? lower : null;
 };
 
-/**
- * A digest field that is present but unparseable is not an absent one.
- * Reading `'zz'` as "the publisher did not specify a certificate" would drop a
- * security check silently, so callers that can tolerate absence still have to
- * reject this.
- */
-const asOptionalHex64 = (
-  v: unknown,
-): { value: string | null } | null => {
-  if (v == null) return { value: null };
-  if (typeof v !== 'string' || v.trim() === '') return { value: null };
-  const parsed = asHex64(v);
-  return parsed ? { value: parsed } : null;
-};
-
 /** An https URL, because an APK fetched over http can be replaced in transit. */
 const asApkUrl = (v: unknown): string | null => {
   const s = asString(v);
@@ -112,11 +99,19 @@ export const parseReleasePolicy = (
   const latestVersion = asString(raw.latestVersion);
   const downloadUrl = asApkUrl(raw.apkUrl);
   const sha256 = asHex64(raw.apkSha256);
-  const cert = asOptionalHex64(raw.signingCertSha256);
-  if (!minimumSupportedVersion || !latestVersion || !downloadUrl || !sha256) {
+  // Required, not optional. A policy that names no signing certificate cannot
+  // answer "who signed this file", and installing on that basis would be the
+  // unknown-signing-identity case the release process is meant to refuse.
+  const signingCertSha256 = asHex64(raw.signingCertSha256);
+  if (
+    !minimumSupportedVersion ||
+    !latestVersion ||
+    !downloadUrl ||
+    !sha256 ||
+    !signingCertSha256
+  ) {
     return null;
   }
-  if (!cert) return null;
   // A minimum above the latest version is a publishing mistake that would
   // brick the app for everyone, so it is treated as no policy at all.
   if (compareVersions(latestVersion, minimumSupportedVersion) < 0) return null;
@@ -129,8 +124,34 @@ export const parseReleasePolicy = (
     downloadUrl,
     sha256,
     sizeBytes: asPositiveInt(raw.apkSizeBytes),
-    signingCertSha256: cert.value,
+    signingCertSha256,
   };
+};
+
+/**
+ * Validate an already-parsed policy, e.g. one read back from local storage.
+ *
+ * The parsed shape and the Firestore document shape are different on purpose
+ * (`sha256` vs `apkSha256`), so the document parser cannot be reused here — and
+ * a cache entry must still be held to the same rules a fresh read is, or an
+ * older or hand-edited cache file would smuggle a gate past the checks the
+ * publisher is expected to satisfy.
+ */
+export const isReleasePolicy = (value: unknown): value is ReleasePolicy => {
+  if (!value || typeof value !== 'object') return false;
+  const p = value as Record<string, unknown>;
+  return (
+    typeof p.minimumSupportedVersion === 'string' &&
+    p.minimumSupportedVersion.length > 0 &&
+    typeof p.latestVersion === 'string' &&
+    p.latestVersion.length > 0 &&
+    typeof p.downloadUrl === 'string' &&
+    /^https:\/\//i.test(p.downloadUrl) &&
+    typeof p.sha256 === 'string' &&
+    HEX64.test(p.sha256) &&
+    typeof p.signingCertSha256 === 'string' &&
+    HEX64.test(p.signingCertSha256)
+  );
 };
 
 /**
@@ -230,17 +251,15 @@ export const evaluateApkIntegrity = (input: {
     return { allowed: false, reason: 'package_mismatch' };
   }
 
-  // The publisher can leave the certificate out of the policy; then the digest
-  // and package checks are all that can be honoured. When it IS published, an
-  // unreadable actual signature is a refusal.
-  if (policy.signingCertSha256) {
-    if (
-      !actual.signingCertSha256 ||
-      actual.signingCertSha256.toLowerCase() !==
-        policy.signingCertSha256.toLowerCase()
-    ) {
-      return { allowed: false, reason: 'signature_mismatch' };
-    }
+  // The policy always carries a certificate, so an unreadable signature on the
+  // downloaded file is a refusal. There is no branch here for "publisher did
+  // not say who signed it", and that is deliberate.
+  if (
+    !actual.signingCertSha256 ||
+    actual.signingCertSha256.toLowerCase() !==
+      policy.signingCertSha256.toLowerCase()
+  ) {
+    return { allowed: false, reason: 'signature_mismatch' };
   }
 
   if (

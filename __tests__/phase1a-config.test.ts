@@ -4,6 +4,8 @@ import {
   LIVE_TV_CONFIG,
   UPDATE_CONFIG,
   WATCH_PARTY_CONFIG,
+  updateRepoConfigured,
+  updatesActive,
 } from '@/src/config/env';
 import { isTVLayout } from '@/src/utils/tv';
 import { CONFIG_DEFAULTS, type AccessResult, type UserDoc } from '@/src/firebase/models';
@@ -65,13 +67,20 @@ describe('feature flags gate the surfaces they name', () => {
     expect(isTVLayout).toBe(false);
   });
 
-  it('switches the updater off, and records why it must stay off', () => {
+  it('ships no repository for the updater, so it can never point at another project', () => {
     expect(UPDATE_CONFIG.enabled).toBe(false);
-    // Its defaults poll upstream Flick's releases and hand the found APK to the installer,
-    // so enabling it before pointing it at StreamZ's own releases would offer a StreamZ
-    // user somebody else's build.
-    expect(UPDATE_CONFIG.OWNER).toBe('sheeshcake');
-    expect(UPDATE_CONFIG.REPO).toBe('Flickv4');
+    // Nothing is baked in: the upstream Flick repository used to be the default, which
+    // meant a StreamZ build with the flag flipped would hand its users somebody else's
+    // APK. The owner has to name their own releases through the environment.
+    expect(UPDATE_CONFIG.OWNER).toBe('');
+    expect(UPDATE_CONFIG.REPO).toBe('');
+    expect(updateRepoConfigured()).toBe(false);
+    expect(updatesActive()).toBe(false);
+  });
+
+  it('honours a grace window that is bounded, never unlimited', () => {
+    expect(UPDATE_CONFIG.OFFLINE_GRACE_MS).toBeGreaterThan(0);
+    expect(UPDATE_CONFIG.OFFLINE_GRACE_MS).toBeLessThanOrEqual(168 * 3_600_000);
   });
 });
 
