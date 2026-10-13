@@ -31,6 +31,13 @@ import { Image } from '@/components/ui/image';
 import { Text } from '@/components/ui/text';
 import { Input, InputField } from '@/components/ui/input';
 import { ScrollView } from '@/components/ui/scroll-view';
+import {
+  Toast,
+  ToastDescription,
+  ToastTitle,
+  useToast,
+} from '@/components/ui/toast';
+import { ConfirmDialog } from '@/src/components/ConfirmDialog';
 import { Focusable } from '@/src/components/Focusable';
 import { useServers } from '@/src/hooks/useServers';
 import { UPDATE_CONFIG, WATCH_PARTY_CONFIG } from '@/src/config/env';
@@ -80,6 +87,9 @@ export const SettingsScreen = () => {
   const { region } = useCatalogRegion();
   const regionName = getRegionName(region);
   const [updaterOpen, setUpdaterOpen] = useState(false);
+  const toast = useToast();
+  const [signOutPrompt, setSignOutPrompt] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const { displayName, setDisplayName } = useWatchParty();
   const [nameDraft, setNameDraft] = useState(displayName);
 
@@ -121,6 +131,37 @@ export const SettingsScreen = () => {
   useEffect(() => {
     setNameDraft(displayName);
   }, [displayName]);
+
+  // Sign-out ends the session only. The subscription record, the activation
+  // key, My List, and any finished downloads all stay on the device — they are
+  // keyed to this account and are needed again the next time it signs in, so
+  // this is deliberately not a "clear my data" action.
+  const confirmSignOut = async () => {
+    setSigningOut(true);
+    try {
+      await signOut();
+      setSignOutPrompt(false);
+    } catch (err) {
+      // Say so rather than going quiet: the user is still signed in, and a
+      // silent failure reads exactly like a successful one.
+      setSignOutPrompt(false);
+      toast.show({
+        placement: 'top',
+        duration: 5000,
+        render: ({ id }) => (
+          <Toast nativeID={id} action="error" variant="solid">
+            <ToastTitle>Couldn&apos;t sign out</ToastTitle>
+            <ToastDescription>
+              You are still signed in. Nothing was deleted — try again, or
+              close the app and repeat.
+            </ToastDescription>
+          </Toast>
+        ),
+      });
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <Box className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
@@ -209,7 +250,7 @@ export const SettingsScreen = () => {
             ) : null}
 
             <Focusable
-              onPress={() => void signOut()}
+              onPress={() => setSignOutPrompt(true)}
               className="mt-4 flex-row items-center justify-center gap-2 rounded-lg border border-border py-2.5"
               focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
             >
@@ -323,6 +364,28 @@ export const SettingsScreen = () => {
       {UPDATE_CONFIG.enabled ? (
         <UpdateModal visible={updaterOpen} onClose={() => setUpdaterOpen(false)} />
       ) : null}
+
+      <ConfirmDialog
+        visible={signOutPrompt}
+        title="Sign out?"
+        message={
+          signingOut
+            ? 'Signing out…'
+            : 'You will need to sign in with Google and re-enter your key to ' +
+              'use the app again. Your subscription, My List, and downloaded ' +
+              'titles are not deleted.'
+        }
+        confirmLabel={signingOut ? 'Signing out…' : 'Log out'}
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={() => {
+          if (signingOut) return;
+          void confirmSignOut();
+        }}
+        onCancel={() => {
+          if (!signingOut) setSignOutPrompt(false);
+        }}
+      />
     </Box>
   );
 };
