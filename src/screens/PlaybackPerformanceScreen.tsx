@@ -38,7 +38,12 @@ export const PlaybackPerformanceScreen = () => {
     effectiveForwardBufferSeconds,
     setForwardBufferSeconds,
   } = usePlaybackSettings();
-  const { smartPlayEnabled, setSmartPlayEnabled } = usePlayerDebugSettings();
+  const {
+    smartPlayEnabled,
+    setSmartPlayEnabled,
+    scraperDebugEnabled,
+    setScraperDebugEnabled,
+  } = usePlayerDebugSettings();
 
   const isAuto = forwardBufferSeconds == null;
 
@@ -118,6 +123,53 @@ export const PlaybackPerformanceScreen = () => {
                   }
                 >
                   Only my server
+                </ButtonText>
+              </Button>
+            </HStack>
+          </VStack>
+
+          <VStack space="sm">
+            <Text className="text-muted-foreground">Resolver view</Text>
+            <Text size="sm" className="text-muted-foreground">
+              Normally the page a server embeds is loaded invisibly and the
+              video address it produces is handed to this app&apos;s own
+              player. Turn this on to watch that page instead — it stays on
+              screen and interactive, so a challenge it asks you can be solved
+              by hand, and what actually plays is the page&apos;s own player
+              rather than ours. Use it when a server refuses to start; leave it
+              off otherwise, because the player here loses the controls,
+              subtitles, and downloads that our own player has.
+            </Text>
+
+            <HStack space="sm" className="mt-2">
+              <Button
+                size="sm"
+                variant={!scraperDebugEnabled ? 'default' : 'outline'}
+                onPress={() => setScraperDebugEnabled(false)}
+              >
+                <ButtonText
+                  className={
+                    !scraperDebugEnabled
+                      ? 'text-primary-foreground'
+                      : 'text-foreground'
+                  }
+                >
+                  Normal player
+                </ButtonText>
+              </Button>
+              <Button
+                size="sm"
+                variant={scraperDebugEnabled ? 'default' : 'outline'}
+                onPress={() => setScraperDebugEnabled(true)}
+              >
+                <ButtonText
+                  className={
+                    scraperDebugEnabled
+                      ? 'text-primary-foreground'
+                      : 'text-foreground'
+                  }
+                >
+                  Show the page
                 </ButtonText>
               </Button>
             </HStack>

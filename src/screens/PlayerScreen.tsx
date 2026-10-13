@@ -121,9 +121,8 @@ export const PlayerScreen = ({
   const stayInRoomOnExitRef = useRef(true);
   // Player debug mode: when on, render the stream-resolving WebViewScraper
   // full-screen and interactive instead of invisible, so you can watch exactly
-  // what the embed page is doing. Note that nothing in the shipped UI can turn
-  // this on yet — `setScraperDebugEnabled` has no control wired to it, so the
-  // flag stays off in practice until the Settings redesign exposes it.
+  // what the embed page is doing. Toggled from Settings > Playback
+  // ("Resolver view"); off is the normal path.
   const { scraperDebugEnabled, smartPlayEnabled } = usePlayerDebugSettings();
   const toast = useToast();
   const type: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
