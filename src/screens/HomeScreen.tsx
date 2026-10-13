@@ -53,7 +53,7 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const deviceKind = useDeviceKind();
-  const { hero, rows, loading, error, refreshing, refresh } = useHomeData();
+  const { hero, rows, loading, error, refreshing, refresh, prefetch } = useHomeData();
   const { items: myList, isInList, toggle } = useMyList();
   const { entries: continueWatching, remove: removeContinue } =
     useContinueWatching();
@@ -71,6 +71,17 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
     contentMarkedRef.current = true;
     mark('home-content-ready');
   }, [rows.length]);
+
+  // Home is normally pre-warmed by the Splash hand-off, but that only runs
+  // when the gate's route was already `Main` at splash time. A user who signs
+  // in and activates a key *in this session* reaches Main via the gate reset,
+  // which never prefetches — leaving Home spinning forever until an app
+  // restart. Main can only mount behind the gate, so kicking off the (idempotent)
+  // prefetch on mount makes the first real load self-heal: it's a no-op when
+  // Splash already fetched, and starts the fetch when it didn't.
+  useEffect(() => {
+    void prefetch();
+  }, [prefetch]);
 
   // Drives the sticky AppHeader's fade-in backdrop + logo shrink as the hero
   // scrolls out of view — see AppHeader's `progress` prop.

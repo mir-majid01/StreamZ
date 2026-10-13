@@ -8,10 +8,14 @@ import {
   CheckCircle2,
   Bookmark,
   Download,
+  Eye,
+  EyeOff,
   Gauge,
   Info,
   Globe,
   Heart,
+  KeyRound,
+  LogOut,
   MonitorPlay,
   Ratio,
   Server as ServerIcon,
@@ -23,6 +27,7 @@ import { VStack } from '@/components/ui/vstack';
 import { HStack } from '@/components/ui/hstack';
 import { Heading } from '@/components/ui/heading';
 import { Icon } from '@/components/ui/icon';
+import { Image } from '@/components/ui/image';
 import { Text } from '@/components/ui/text';
 import { Input, InputField } from '@/components/ui/input';
 import { ScrollView } from '@/components/ui/scroll-view';
@@ -45,6 +50,10 @@ import { UpdateModal } from '@/src/components/UpdateModal';
 import { updateService } from '@/src/services/UpdateService';
 import { useFinishedMovies } from '@/src/hooks/useFinishedMovies';
 import { useMyList } from '@/src/hooks/useMyList';
+import { useSession } from '@/src/firebase/auth/SessionProvider';
+import { signOut } from '@/src/firebase/auth/googleAuth';
+import { DAY_MS } from '@/src/firebase/models';
+import { loadActivationKey, maskKey } from '@/src/firebase/subscriptions/savedKey';
 import { usePlaybackSettings } from '@/src/hooks/usePlaybackSettings';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
 import { PARTY_DISPLAY_NAME_MAX } from '@/src/party/displayName';
@@ -74,6 +83,41 @@ export const SettingsScreen = () => {
   const { displayName, setDisplayName } = useWatchParty();
   const [nameDraft, setNameDraft] = useState(displayName);
 
+  // Account panel — the signed-in Google identity and, when the key was
+  // cached at activation, the (masked) key itself. `access.expiresAt` and
+  // `access.serverTimeMs` come from the live server verdict, so "days left"
+  // is real, not a device-clock guess.
+  const { user, access } = useSession();
+  const [activationKey, setActivationKey] = useState<string | null>(null);
+  const [keyRevealed, setKeyRevealed] = useState(false);
+  const uid = user?.uid ?? null;
+  useEffect(() => {
+    let active = true;
+    setKeyRevealed(false);
+    if (!uid) {
+      setActivationKey(null);
+      return;
+    }
+    void loadActivationKey(uid).then((k) => {
+      if (active) setActivationKey(k);
+    });
+    return () => {
+      active = false;
+    };
+  }, [uid]);
+  const expiresAt = access?.expiresAt ?? null;
+  const daysLeft =
+    expiresAt != null
+      ? Math.max(0, Math.ceil((expiresAt - (access?.serverTimeMs ?? Date.now())) / DAY_MS))
+      : null;
+  const expiryLabel = expiresAt != null
+    ? new Date(expiresAt).toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      })
+    : null;
+
   useEffect(() => {
     setNameDraft(displayName);
   }, [displayName]);
@@ -89,6 +133,91 @@ export const SettingsScreen = () => {
         contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
       >
         <VStack space="sm" className="px-4">
+          {/* ── Account ───────────────────────────────────────────────
+              Identity + subscription live at the top so the user sees who
+              they are signed in as, how much of the term remains, and the
+              key that granted it — then can sign out from here. */}
+          <Box className="rounded-xl bg-card p-4">
+            <HStack space="md" className="items-center">
+              {user?.photoURL ? (
+                <Image
+                  source={{ uri: user.photoURL }}
+                  alt={user.displayName ?? 'Account'}
+                  resizeMode="cover"
+                  className="h-12 w-12 rounded-full bg-background"
+                />
+              ) : (
+                <Box className="h-12 w-12 items-center justify-center rounded-full bg-primary/20">
+                  <Text className="text-lg font-bold text-primary">
+                    {(user?.displayName ?? user?.email ?? '?')
+                      .trim()
+                      .charAt(0)
+                      .toUpperCase()}
+                  </Text>
+                </Box>
+              )}
+              <VStack className="flex-1">
+                <Heading size="md" className="text-foreground" numberOfLines={1}>
+                  {user?.displayName ?? 'Signed in'}
+                </Heading>
+                {user?.email ? (
+                  <Text size="xs" className="text-muted-foreground" numberOfLines={1}>
+                    {user.email}
+                  </Text>
+                ) : null}
+              </VStack>
+            </HStack>
+
+            {expiresAt != null ? (
+              <HStack className="mt-3 items-center justify-between">
+                <Text size="sm" className="text-muted-foreground">
+                  Subscription
+                </Text>
+                <Text size="sm" className="text-foreground">
+                  {daysLeft != null && daysLeft > 0
+                    ? `${daysLeft} day${daysLeft === 1 ? '' : 's'} left · ${expiryLabel}`
+                    : `Expired · ${expiryLabel}`}
+                </Text>
+              </HStack>
+            ) : null}
+
+            {activationKey ? (
+              <HStack className="mt-2 items-center justify-between">
+                <HStack space="sm" className="flex-1 items-center">
+                  <Icon as={KeyRound} size="sm" className="text-muted-foreground" />
+                  <Text
+                    size="sm"
+                    className="text-foreground"
+                    selectable
+                  >
+                    {keyRevealed ? activationKey : maskKey(activationKey)}
+                  </Text>
+                </HStack>
+                <Focusable
+                  onPress={() => setKeyRevealed((r) => !r)}
+                  hitSlop={10}
+                  className="rounded-full p-1.5"
+                  focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+                >
+                  <Icon
+                    as={keyRevealed ? EyeOff : Eye}
+                    size="sm"
+                    className="text-muted-foreground"
+                  />
+                </Focusable>
+              </HStack>
+            ) : null}
+
+            <Focusable
+              onPress={() => void signOut()}
+              className="mt-4 flex-row items-center justify-center gap-2 rounded-lg border border-border py-2.5"
+              focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+            >
+              <Icon as={LogOut} size="sm" className="text-foreground" />
+              <Text className="text-foreground">Sign out</Text>
+            </Focusable>
+          </Box>
+
           {WATCH_PARTY_CONFIG.enabled ? (
             <>
               <MenuRow

@@ -4,6 +4,7 @@ import { modelName } from 'expo-device';
 import { currentUserUid, ensureFirebase } from '@/src/firebase/init';
 import { getInstallationId } from '@/src/firebase/installation/installationId';
 import { normalizeKeyBody } from '@/src/firebase/subscriptions/keyFormat';
+import { saveActivationKey } from '@/src/firebase/subscriptions/savedKey';
 import { keyDocId } from '@/src/firebase/subscriptions/keyHash';
 import { sha256Hex } from '@/src/firebase/subscriptions/digests';
 import { getAppVersion } from '@/src/utils/appVersion';
@@ -108,6 +109,7 @@ const refused = (code: ActivateCode): ActivateResult => ({
   code,
   expiresAt: null,
   durationDays: null,
+  durationMs: null,
 });
 
 const deviceRecord = (
@@ -195,7 +197,7 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
   const profile = getAuth().currentUser;
 
   try {
-    return await withTimeout(
+    const result = await withTimeout(
       runTransaction<ActivateResult>(db, async (tx) => {
         const keyRef = doc(db, 'subscriptionKeys', keyId);
         const userRef = doc(db, 'users', uid);
@@ -206,19 +208,22 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
         const now = Date.now();
         const keyStatus = String(key.status ?? 'UNUSED').toUpperCase();
         const keyExpiry = maybeNum(key.expiresAt);
-        // The admin owns this field, and it is the only statement of how long the term was
-        // meant to last — an already-owned key reports it unchanged from when it minted.
+        // The admin owns these fields, and they are the only statement of how long the term
+        // was meant to last — an already-owned key reports them unchanged from when it minted.
         const durationDays = Math.max(
           1,
           Math.floor(num(key.durationDays, CONFIG_DEFAULTS.keyDurationDays)),
         );
+        // durationMs is authoritative; durationDays is its whole-day ceiling, and is all
+        // keys minted before sub-day durations existed carry.
+        const durationMs = maybeNum(key.durationMs) ?? durationDays * DAY_MS;
         if (keyStatus === 'REVOKED') return refused('REVOKED');
         if (keyStatus === 'EXPIRED' || (keyExpiry !== null && keyExpiry <= now)) {
           return refused('EXPIRED');
         }
         if (keyStatus === 'ACTIVE') {
           return key.uid === uid
-            ? { code: 'ALREADY_OWNED', expiresAt: keyExpiry, durationDays }
+            ? { code: 'ALREADY_OWNED', expiresAt: keyExpiry, durationDays, durationMs }
             : refused('ALREADY_BOUND');
         }
 
@@ -233,7 +238,7 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
         const maxRotations = num(config.maxInstallationRotations, CONFIG_DEFAULTS.maxInstallationRotations);
         if (rotating && rotations >= maxRotations) return refused('CEILING');
 
-        const expiresAt = now + durationDays * DAY_MS;
+        const expiresAt = now + durationMs;
 
         // Merge, never replace: keyHash, durationDays, createdAt and createdBy are
         // admin-owned, and the rules refuse a write that drops them.
@@ -284,10 +289,17 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
           deviceRecord(uid, installationId, now, null),
           { merge: true },
         );
-        return { code: 'ACTIVATED', expiresAt, durationDays };
+        return { code: 'ACTIVATED', expiresAt, durationDays, durationMs };
       }),
       ACTIVATE_TIMEOUT_MS,
     );
+    if (result.code === 'ACTIVATED' || result.code === 'ALREADY_OWNED') {
+      // Cache the exact key the user typed (uid-scoped, SecureStore) so the
+      // Settings account panel can re-display it later. The auth model itself
+      // only ever stores the hash; this is a deliberate, opt-in convenience.
+      void saveActivationKey(uid, body);
+    }
+    return result;
   } catch (e) {
     if (isFirestoreTransportFailure(e)) throw new TransportError('transport');
     throw e;
