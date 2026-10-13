@@ -6,6 +6,7 @@ import {
   type DownloadTask,
 } from 'expo-file-system';
 import * as IntentLauncher from 'expo-intent-launcher';
+import { BRAND } from '@/src/config/brand';
 import { UPDATE_CONFIG, updateRepoConfigured } from '@/src/config/env';
 import {
   getAppVersion,
@@ -299,6 +300,18 @@ class UpdateService {
         flags: FLAG_GRANT_READ_URI_PERMISSION,
         type: 'application/vnd.android.package-archive',
       },
+    );
+  }
+
+  /**
+   * Opens the per-app "install unknown apps" screen for this package, which is where Android 8+
+   * lets a user grant `REQUEST_INSTALL_PACKAGES`. Reached only after the device has said the grant
+   * is missing, so it is a route to the setting rather than a guess that one is needed.
+   */
+  async openUnknownSourcesSettings(): Promise<void> {
+    await IntentLauncher.startActivityAsync(
+      'android.settings.MANAGE_UNKNOWN_APP_SOURCES',
+      { data: `package:${BRAND.applicationId}` },
     );
   }
 }

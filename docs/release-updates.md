@@ -79,6 +79,16 @@ changing their mind, and a stale cache must not keep enforcing the old answer.
 The read is bounded (`POLICY_TIMEOUT_MS`, 8 s) so a hung Firestore call cannot hold app startup
 open.
 
+## Before the download starts
+
+Android 8+ keeps "install unknown apps" as a per-app grant the user must give, so `startUpdate`
+first asks the device (`canRequestPackageInstalls`, exposed by the same native module). When the
+grant is missing, nothing is downloaded: the modal explains it and offers the system screen
+(`ACTION_MANAGE_UNKNOWN_APP_SOURCES` for `stream.z`) plus a retry. A device that cannot answer the
+question is treated as allowed — the OS then shows its own prompt — because refusing an update on an
+unknown permission is a worse failure than a wrong digest, which is why the digest path fails closed
+instead.
+
 ## Before the installer is offered
 
 A finished download is not evidence of authenticity. `evaluateApkIntegrity`

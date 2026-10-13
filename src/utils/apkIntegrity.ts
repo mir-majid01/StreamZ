@@ -5,6 +5,7 @@
  */
 export {
   apkIntegrityAvailable,
+  canInstallFromUnknownSources,
   inspectApk,
   type ApkMeasurements,
 } from '../../modules/apk-integrity/src';

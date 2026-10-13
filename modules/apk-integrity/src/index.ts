@@ -15,6 +15,7 @@ export interface ApkMeasurements {
 
 interface NativeApkIntegrity {
   inspectApk(path: string): Promise<Partial<ApkMeasurements> | null>;
+  canInstallFromUnknownSources(): Promise<boolean>;
 }
 
 // Resolved lazily: the native side only exists on Android, and touching it at module scope would
@@ -45,6 +46,24 @@ const toFsPath = (uriOrPath: string): string =>
 
 /** False when the platform, the build, or the link is missing the native verifier. */
 export const apkIntegrityAvailable = (): boolean => getNative() !== null;
+
+/**
+ * Whether Android will let this app start an installer at all.
+ *
+ * A device that cannot answer is reported as allowed. That is deliberate and it is the opposite
+ * of the digest rule: guessing "no" here would lock a user out of an update they are permitted to
+ * install, while guessing "yes" costs nothing but Android's own prompt. A wrong digest, by
+ * contrast, would install somebody else's file, so unknown there means refusal.
+ */
+export const canInstallFromUnknownSources = async (): Promise<boolean> => {
+  const native = getNative();
+  if (!native) return true;
+  try {
+    return await native.canInstallFromUnknownSources();
+  } catch {
+    return true;
+  }
+};
 
 /**
  * Hash the file, read the package name it declares, and fingerprint the certificate that signed

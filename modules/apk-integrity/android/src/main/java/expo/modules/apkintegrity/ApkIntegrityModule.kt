@@ -36,9 +36,18 @@ class ApkIntegrityModule : Module() {
       inspect(path)
     }
 
-    AsyncFunction("sha256OfFile") { path: String ->
-      mapOf("sha256" to runCatching { sha256(File(path)) }.getOrNull())
+    // Whether this app may hand an APK to the installer at all. Below API 26 there is no
+    // per-app grant to read, so the answer is yes and Android's own prompt decides.
+    AsyncFunction("canInstallFromUnknownSources") {
+      canInstallFromUnknownSources()
     }
+  }
+
+  private fun canInstallFromUnknownSources(): Boolean {
+    val context = appContext.reactContext ?: return false
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return true
+    return runCatching { context.packageManager.canRequestPackageInstalls() }
+      .getOrDefault(false)
   }
 
   private fun inspect(path: String): Map<String, Any?> {

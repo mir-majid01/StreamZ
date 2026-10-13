@@ -17,6 +17,7 @@ import {
   type UpdateInfo,
 } from '@/src/services/UpdateService';
 import { verifyDownloadedApk } from '@/src/firebase/release/policy';
+import { canInstallFromUnknownSources } from '@/src/utils/apkIntegrity';
 import type {
   IntegrityReason,
   ReleasePolicy,
@@ -47,6 +48,7 @@ type UpdateState =
   | 'available'
   | 'up-to-date'
   | 'error'
+  | 'needsPermission'
   | 'downloading'
   | 'verifying'
   | 'refused'
@@ -167,6 +169,12 @@ export const UpdateModal = ({
       await openReleasePage();
       return;
     }
+    // Asked before the download starts: spending the user's data on an APK the
+    // OS will refuse to install is the worse failure.
+    if (!(await canInstallFromUnknownSources())) {
+      setState('needsPermission');
+      return;
+    }
     setState('downloading');
     setDownloadProgress(0);
     setDownloadedBytes(0);
@@ -202,6 +210,17 @@ export const UpdateModal = ({
   const cancelDownloadFlow = useCallback(() => {
     updateService.cancelDownload();
     setState('available');
+  }, []);
+
+  const openInstallSettings = useCallback(async () => {
+    try {
+      await updateService.openUnknownSourcesSettings();
+    } catch {
+      setErrorMessage(
+        'Android did not open the install permission screen. Allow "install unknown apps" for StreamZ in System settings, then try again.',
+      );
+      setState('error');
+    }
   }, []);
 
   const retryInstall = useCallback(() => {
@@ -290,6 +309,22 @@ export const UpdateModal = ({
 
               {state === 'downloading' && info && (
                 <VersionSummary info={info} showDownloadSize />
+              )}
+
+              {state === 'needsPermission' && (
+                <VStack space="md" className="items-center py-6">
+                  <Text size="3xl" className="text-primary">
+                    !
+                  </Text>
+                  <Heading size="md" className="text-foreground">
+                    StreamZ may not install apps yet
+                  </Heading>
+                  <Text size="sm" className="text-center text-muted-foreground">
+                    Android keeps this as a per-app switch that only you can
+                    turn on. Nothing has been downloaded. Open the setting,
+                    allow installs for StreamZ, then come back and try again.
+                  </Text>
+                </VStack>
               )}
 
               {state === 'verifying' && (
@@ -421,6 +456,46 @@ export const UpdateModal = ({
                       </Box>
                     </Pressable>
                   )
+                )}
+              </VStack>
+            )}
+
+            {state === 'needsPermission' && (
+              <VStack space="sm" className="mt-4">
+                <Focusable
+                  onPress={openInstallSettings}
+                  hasTVPreferredFocus
+                  className="items-center rounded-md bg-primary px-4 py-3"
+                  focusedClassName="border-2 border-foreground"
+                >
+                  <Text className="font-semibold text-primary-foreground">
+                    Open system settings
+                  </Text>
+                </Focusable>
+                <Focusable
+                  onPress={startUpdate}
+                  className="items-center rounded-md border border-border px-4 py-3"
+                  focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                >
+                  <Text className="text-foreground">I&apos;ve allowed it — try again</Text>
+                </Focusable>
+                {!mandatory && (
+                  <Focusable
+                    onPress={onClose}
+                    className="items-center rounded-md border border-border px-4 py-3"
+                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                  >
+                    <Text className="text-foreground">Later</Text>
+                  </Focusable>
+                )}
+                {mandatory && (
+                  <Focusable
+                    onPress={() => onExit?.()}
+                    className="items-center rounded-md border border-border px-4 py-3"
+                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                  >
+                    <Text className="text-foreground">Exit</Text>
+                  </Focusable>
                 )}
               </VStack>
             )}
