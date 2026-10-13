@@ -5,12 +5,16 @@ import {
   getFirestore,
 } from '@react-native-firebase/firestore';
 import { ensureFirebase } from '@/src/firebase/init';
+import { BRAND } from '@/src/config/brand';
 import { UPDATE_CONFIG } from '@/src/config/env';
 import { getAppVersion, getInstalledAppVersion } from '@/src/utils/appVersion';
+import { apkIntegrityAvailable, inspectApk } from '@/src/utils/apkIntegrity';
 import {
   decideUpdate,
+  evaluateApkIntegrity,
   isReleasePolicy,
   parseReleasePolicy,
+  type IntegrityReason,
   type PolicyOutcome,
   type ReleasePolicy,
   type UpdateDecision,
@@ -153,5 +157,25 @@ export const evaluateReleasePolicy = async (): Promise<UpdateDecision> => {
     cached,
     nowMs: Date.now(),
     graceMs: UPDATE_CONFIG.OFFLINE_GRACE_MS,
+  });
+};
+
+/**
+ * Measure a file we already downloaded and answer the only question that matters before
+ * handing it to the installer: is this the APK the policy described?
+ *
+ * When the native verifier is absent the measurements are null, and `evaluateApkIntegrity`
+ * turns that into a refusal. An unverifiable file is never installed, and never reported as
+ * a pass.
+ */
+export const verifyDownloadedApk = async (
+  fileUri: string,
+  policy: ReleasePolicy | null,
+): Promise<{ allowed: boolean; reason: IntegrityReason }> => {
+  const actual = apkIntegrityAvailable() ? await inspectApk(fileUri) : null;
+  return evaluateApkIntegrity({
+    policy,
+    actual,
+    expectedPackageName: BRAND.applicationId,
   });
 };

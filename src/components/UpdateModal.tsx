@@ -16,6 +16,11 @@ import {
   updateService,
   type UpdateInfo,
 } from '@/src/services/UpdateService';
+import { verifyDownloadedApk } from '@/src/firebase/release/policy';
+import type {
+  IntegrityReason,
+  ReleasePolicy,
+} from '@/src/utils/releasePolicy';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 
 interface UpdateModalProps {
@@ -25,6 +30,16 @@ interface UpdateModalProps {
   initialUpdateInfo?: UpdateInfo | null;
   /** Optional "Skip this version" callback. */
   onSkipVersion?: () => void;
+  /**
+   * The published release policy whose digest, package name and signing
+   * certificate the downloaded file is checked against. Without it there is
+   * nothing to verify against, so the in-app install is not offered.
+   */
+  policy?: ReleasePolicy | null;
+  /** Mandatory updates cannot be dismissed, skipped, or backed out of. */
+  mandatory?: boolean;
+  /** Used by the Exit action on a mandatory update. */
+  onExit?: () => void;
 }
 
 type UpdateState =
@@ -33,18 +48,40 @@ type UpdateState =
   | 'up-to-date'
   | 'error'
   | 'downloading'
+  | 'verifying'
+  | 'refused'
   | 'installing'
   | 'downloaded';
+
+const REFUSAL_COPY: Record<IntegrityReason, string> = {
+  ok: '',
+  not_measured:
+    'This build cannot verify downloads, so it will not install one. Install manually from the release page.',
+  no_expected_digest:
+    'The published release does not name a checksum, so this file cannot be trusted.',
+  digest_mismatch:
+    'The downloaded file does not match the published checksum. It may be corrupt or not our release.',
+  package_mismatch:
+    'The downloaded file is not a StreamZ package.',
+  signature_mismatch:
+    'The downloaded file was not signed by StreamZ.',
+  size_mismatch:
+    'The downloaded file is a different size than the published release.',
+};
 
 export const UpdateModal = ({
   visible,
   onClose,
   initialUpdateInfo,
   onSkipVersion,
+  policy = null,
+  mandatory = false,
+  onExit,
 }: UpdateModalProps) => {
   const [state, setState] = useState<UpdateState>('checking');
   const [info, setInfo] = useState<UpdateInfo | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [refusal, setRefusal] = useState<IntegrityReason>('not_measured');
 
   // In-app download/install flow state (Android only — see `downloadUrl`).
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -121,9 +158,10 @@ export const UpdateModal = ({
     }
   }, []);
 
-  // Primary "Update" action: downloads the APK in-app with progress, then
-  // automatically launches the installer — no extra manual step beyond the
-  // OS's own install confirmation dialog.
+  // Primary "Update" action: downloads the APK in-app with progress, proves it is the
+  // release the policy describes, and only then hands it to the installer. A finished
+  // download is not evidence of authenticity, so nothing installs on an unverified
+  // file — not even when the user is stuck behind a mandatory gate.
   const startUpdate = useCallback(async () => {
     if (Platform.OS !== 'android' || !info?.downloadUrl) {
       await openReleasePage();
@@ -145,6 +183,13 @@ export const UpdateModal = ({
         },
       );
       setDownloadedFile(file);
+      setState('verifying');
+      const verdict = await verifyDownloadedApk(file.uri, policy);
+      if (!verdict.allowed) {
+        setRefusal(verdict.reason);
+        setState('refused');
+        return;
+      }
       await runInstall(file);
     } catch (err) {
       setErrorMessage(
@@ -152,7 +197,7 @@ export const UpdateModal = ({
       );
       setState('error');
     }
-  }, [info, openReleasePage, runInstall]);
+  }, [info, openReleasePage, policy, runInstall]);
 
   const cancelDownloadFlow = useCallback(() => {
     updateService.cancelDownload();
@@ -164,29 +209,37 @@ export const UpdateModal = ({
   }, [downloadedFile, runInstall]);
 
   const canDownload =
-    Platform.OS === 'android' && Boolean(info?.downloadUrl);
+    Platform.OS === 'android' &&
+    Boolean(info?.downloadUrl) &&
+    Boolean(policy);
 
   return (
     <Modal
       visible={visible}
       transparent
       animationType="fade"
-      onRequestClose={onClose}
+      // A mandatory gate has no dismissal gesture: hardware back stays with the
+      // screen so the only ways out are updating or exiting.
+      onRequestClose={() => {
+        if (!mandatory) onClose();
+      }}
     >
       <Box className="flex-1 bg-background/90">
         <Box className="flex-1 items-center justify-center px-6">
           <Box className="h-[90vh] w-full max-w-md overflow-hidden rounded-2xl bg-card p-6">
             <HStack className="mb-4 items-center justify-between">
               <Heading size="lg" bold className="text-foreground">
-                App Update
+                {mandatory ? 'Update required' : 'App Update'}
               </Heading>
-              <Focusable
-                onPress={onClose}
-                className="rounded-full bg-background/40 p-2"
-                focusedClassName={`bg-primary ${TV_FOCUS_BORDER_CLASSNAME}`}
-              >
-                <Icon as={X} size="lg" className="text-foreground" />
-              </Focusable>
+              {!mandatory && (
+                <Focusable
+                  onPress={onClose}
+                  className="rounded-full bg-background/40 p-2"
+                  focusedClassName={`bg-primary ${TV_FOCUS_BORDER_CLASSNAME}`}
+                >
+                  <Icon as={X} size="lg" className="text-foreground" />
+                </Focusable>
+              )}
             </HStack>
 
             <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
@@ -237,6 +290,31 @@ export const UpdateModal = ({
 
               {state === 'downloading' && info && (
                 <VersionSummary info={info} showDownloadSize />
+              )}
+
+              {state === 'verifying' && (
+                <VStack space="md" className="items-center py-8">
+                  <Spinner size="large" color="#E50914" />
+                  <Text className="text-foreground">Verifying the download…</Text>
+                  <Text size="xs" className="text-center text-muted-foreground">
+                    Checking the fingerprint, package, and signature before
+                    installing anything.
+                  </Text>
+                </VStack>
+              )}
+
+              {state === 'refused' && info && (
+                <VStack space="md" className="items-center py-6">
+                  <Text size="3xl" className="text-primary">
+                    !
+                  </Text>
+                  <Heading size="md" className="text-foreground">
+                    This file was not installed
+                  </Heading>
+                  <Text size="sm" className="text-center text-muted-foreground">
+                    {REFUSAL_COPY[refusal]}
+                  </Text>
+                </VStack>
               )}
 
               {state === 'installing' && (
@@ -298,34 +376,83 @@ export const UpdateModal = ({
                         Download & install
                       </Text>
                     </Focusable>
-                    <Focusable
-                      onPress={openReleasePage}
-                      className="items-center rounded-md border border-border px-4 py-3"
-                      focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                    >
-                      <Text className="text-foreground">Release page</Text>
-                    </Focusable>
+                    {info.releaseUrl && (
+                      <Focusable
+                        onPress={openReleasePage}
+                        className="items-center rounded-md border border-border px-4 py-3"
+                        focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                      >
+                        <Text className="text-foreground">Release page</Text>
+                      </Focusable>
+                    )}
                   </>
                 ) : (
-                  <Focusable
-                    onPress={openReleasePage}
-                    hasTVPreferredFocus
-                    className="items-center rounded-md bg-primary px-4 py-3"
-                    focusedClassName="border-2 border-foreground"
-                  >
-                    <Text className="font-semibold text-primary-foreground">
-                      View on GitHub
-                    </Text>
-                  </Focusable>
-                )}
-                {onSkipVersion && (
-                  <Pressable onPress={onSkipVersion}>
-                    <Box className="items-center py-2">
-                      <Text size="sm" className="text-muted-foreground">
-                        Skip this version
+                  // No in-app install on this platform or no digest to verify
+                  // against — the only honest link left is the release page,
+                  // and a policy-driven update has none of those.
+                  !!info.releaseUrl && (
+                    <Focusable
+                      onPress={openReleasePage}
+                      hasTVPreferredFocus
+                      className="items-center rounded-md bg-primary px-4 py-3"
+                      focusedClassName="border-2 border-foreground"
+                    >
+                      <Text className="font-semibold text-primary-foreground">
+                        View on GitHub
                       </Text>
-                    </Box>
-                  </Pressable>
+                    </Focusable>
+                  )
+                )}
+                {mandatory ? (
+                  <Focusable
+                    onPress={() => onExit?.()}
+                    className="items-center rounded-md border border-border px-4 py-3"
+                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                  >
+                    <Text className="text-foreground">Exit</Text>
+                  </Focusable>
+                ) : (
+                  onSkipVersion && (
+                    <Pressable onPress={onSkipVersion}>
+                      <Box className="items-center py-2">
+                        <Text size="sm" className="text-muted-foreground">
+                          Skip this version
+                        </Text>
+                      </Box>
+                    </Pressable>
+                  )
+                )}
+              </VStack>
+            )}
+
+            {state === 'refused' && (
+              <VStack space="sm" className="mt-4">
+                <Focusable
+                  onPress={startUpdate}
+                  hasTVPreferredFocus
+                  className="items-center rounded-md bg-primary px-4 py-3"
+                  focusedClassName="border-2 border-foreground"
+                >
+                  <Text className="font-semibold text-primary-foreground">
+                    Download again
+                  </Text>
+                </Focusable>
+                {mandatory ? (
+                  <Focusable
+                    onPress={() => onExit?.()}
+                    className="items-center rounded-md border border-border px-4 py-3"
+                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                  >
+                    <Text className="text-foreground">Exit</Text>
+                  </Focusable>
+                ) : (
+                  <Focusable
+                    onPress={onClose}
+                    className="items-center rounded-md border border-border px-4 py-3"
+                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                  >
+                    <Text className="text-foreground">Later</Text>
+                  </Focusable>
                 )}
               </VStack>
             )}
@@ -405,6 +532,15 @@ export const UpdateModal = ({
                     <Text className="text-foreground">
                       Open in browser instead
                     </Text>
+                  </Focusable>
+                )}
+                {mandatory && (
+                  <Focusable
+                    onPress={() => onExit?.()}
+                    className="items-center rounded-md border border-border px-4 py-3"
+                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                  >
+                    <Text className="text-foreground">Exit</Text>
                   </Focusable>
                 )}
               </VStack>

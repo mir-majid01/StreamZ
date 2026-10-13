@@ -41,14 +41,24 @@ jest.mock('@/src/utils/appVersion', () => ({
   getInstalledAppVersion: jest.fn(() => '0.1.0'),
 }));
 
+jest.mock('@/src/utils/apkIntegrity', () => ({
+  apkIntegrityAvailable: jest.fn(() => true),
+  inspectApk: jest.fn(),
+}));
+
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getDoc } from '@react-native-firebase/firestore';
 import { ensureFirebase } from '@/src/firebase/init';
-import { isReleasePolicy } from '@/src/utils/releasePolicy';
+import { isReleasePolicy, type ReleasePolicy } from '@/src/utils/releasePolicy';
+import {
+  apkIntegrityAvailable,
+  inspectApk,
+} from '@/src/utils/apkIntegrity';
 import {
   classifyPolicyError,
   evaluateReleasePolicy,
   readReleasePolicy,
+  verifyDownloadedApk,
 } from '@/src/firebase/release/policy';
 
 const SHA = 'a'.repeat(64);
@@ -210,5 +220,67 @@ describe('evaluateReleasePolicy', () => {
     });
     await evaluateReleasePolicy();
     expect(await AsyncStorage.getItem('streamz.releasePolicy.v1')).toBeNull();
+  });
+});
+
+const PARSED_POLICY: ReleasePolicy = {
+  minimumSupportedVersion: '0.2.0',
+  latestVersion: '0.3.0',
+  releaseNotes: 'notes',
+  publishedAt: null,
+  downloadUrl: 'https://example.invalid/app-release.apk',
+  sha256: SHA,
+  sizeBytes: 1234,
+  signingCertSha256: CERT,
+};
+
+const MEASUREMENTS = {
+  sha256: SHA,
+  packageName: 'stream.z',
+  signingCertSha256: CERT,
+  sizeBytes: 1234,
+};
+
+describe('verifyDownloadedApk', () => {
+  const measure = (value: unknown) =>
+    (inspectApk as unknown as jest.Mock).mockResolvedValue(value);
+
+  beforeEach(() => {
+    (apkIntegrityAvailable as unknown as jest.Mock).mockReturnValue(true);
+    measure(MEASUREMENTS);
+  });
+
+  it('installs only a file that answers every published expectation', async () => {
+    expect(await verifyDownloadedApk('file:///tmp/a.apk', PARSED_POLICY)).toEqual({
+      allowed: true,
+      reason: 'ok',
+    });
+  });
+
+  it('refuses when the device cannot measure the file at all', async () => {
+    (apkIntegrityAvailable as unknown as jest.Mock).mockReturnValue(false);
+    const verdict = await verifyDownloadedApk('file:///tmp/a.apk', PARSED_POLICY);
+    expect(verdict.allowed).toBe(false);
+    expect(verdict.reason).toBe('not_measured');
+    expect(inspectApk).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['a different package', { packageName: 'com.sheeshcake.flick' }, 'package_mismatch'],
+    ['a tampered digest', { sha256: 'f'.repeat(64) }, 'digest_mismatch'],
+    ['another signing certificate', { signingCertSha256: 'c'.repeat(64) }, 'signature_mismatch'],
+    ['a truncated download', { sizeBytes: 1000 }, 'size_mismatch'],
+  ] as const)('refuses %s', async (_label, patch, reason) => {
+    measure({ ...MEASUREMENTS, ...patch });
+    const verdict = await verifyDownloadedApk('file:///tmp/a.apk', PARSED_POLICY);
+    expect(verdict).toEqual({ allowed: false, reason });
+  });
+
+  it('refuses when the native inspection returns nothing', async () => {
+    (inspectApk as unknown as jest.Mock).mockResolvedValue(null);
+    expect(await verifyDownloadedApk('file:///tmp/a.apk', PARSED_POLICY)).toEqual({
+      allowed: false,
+      reason: 'not_measured',
+    });
   });
 });

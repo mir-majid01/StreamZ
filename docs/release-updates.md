@@ -5,9 +5,10 @@ Android installer. Written for the person who publishes releases, so the procedu
 the operative part.
 
 **Production update checks are off.** `FEATURES.updateChecker` (`src/config/features.ts`) is
-`false`, and the updater additionally requires a repository named through the environment
-(`EXPO_PUBLIC_UPDATE_REPO_OWNER` + `EXPO_PUBLIC_UPDATE_REPO_NAME`). Either condition alone keeps it
-inert. Nothing in this document changes that until the gates at the end are met.
+`false`, and that flag alone keeps the boot gate inert — it is the switch for the policy path.
+`EXPO_PUBLIC_UPDATE_REPO_OWNER` + `EXPO_PUBLIC_UPDATE_REPO_NAME` gate only the older GitHub
+service (the manual check in Settings); with no repository named that service refuses to fetch
+anything, which is what stops any build from ever pointing at upstream Flick releases.
 
 ## What decides "mandatory"
 
@@ -26,6 +27,13 @@ bumping `APP_VERSION` in `.env` cannot disguise an outdated APK.
 GitHub Releases are only a source of notes and a download URL. Whether an update is *required*, and
 what makes a downloaded file trustworthy, comes from Firestore: a repository the app can read is
 not an authority over its own version floor.
+
+The gate is enforced at `SplashScreen`: it evaluates the policy after the catalog region loads, and
+hands `UpdateModal` the policy plus a `mandatory` flag. When mandatory, the modal renders no close
+icon, no "Skip this version", ignores hardware back, and its Exit action calls
+`BackHandler.exitApp()`. Nothing is installed until `verifyDownloadedApk` has checked the digest,
+the package name against `BRAND.applicationId`, and the signing certificate; a refusal — including
+"the device could not measure this file" — replaces the install with the reason.
 
 ## Schema
 

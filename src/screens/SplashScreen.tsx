@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useWindowDimensions } from 'react-native';
+import { BackHandler, useWindowDimensions } from 'react-native';
 import { Box } from '@/components/ui/box';
 import { VStack } from '@/components/ui/vstack';
 import { UpdateModal } from '@/src/components/UpdateModal';
@@ -15,12 +15,12 @@ import { useServers } from '@/src/hooks/useServers';
 import { useHomeData } from '@/src/hooks/useHomeData';
 import { useCatalogRegion } from '@/src/hooks/useCatalogRegion';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
+import { evaluateReleasePolicy } from '@/src/firebase/release/policy';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 import { mark } from '@/src/utils/startupTiming';
-import {
-  updateService,
-  type UpdateInfo,
-} from '@/src/services/UpdateService';
+import { getAppVersion } from '@/src/utils/appVersion';
+import type { UpdateInfo } from '@/src/services/UpdateService';
+import type { ReleasePolicy, UpdateDecision } from '@/src/utils/releasePolicy';
 import {
   clearSkippedVersion,
   isSkippedVersion,
@@ -29,18 +29,37 @@ import {
 } from '@/src/utils/updateCheckStorage';
 
 /**
- * Soft-fail update check so a network blip never blocks entering Main. Disabled entirely in
- * Phase 1A: with the defaults this polls the upstream Flick releases and would offer a
- * StreamZ user somebody else's APK.
+ * The boot-time release check is a soft failure by design: no policy, a refused read, a timeout,
+ * or a malformed document all resolve to `unknown`, and `unknown` lets the user in. Only a policy
+ * that says this build is below `minimumSupportedVersion` is allowed to hold the splash open.
+ * With `FEATURES.updateChecker` off this never runs at all.
  */
-const checkUpdatesSafe = async (): Promise<UpdateInfo | null> => {
+const checkPolicySafe = async (): Promise<UpdateDecision | null> => {
   if (!UPDATE_CONFIG.enabled) return null;
   try {
-    return await updateService.checkForUpdates();
+    return await evaluateReleasePolicy();
   } catch {
     return null;
   }
 };
+
+/**
+ * The modal renders `UpdateInfo`; the policy is the authoritative source, so the
+ * view fields are derived from it rather than fetched a second time from GitHub.
+ * `releaseUrl` is left empty on purpose — a policy publishes a download, not a
+ * web page, and the UI must not offer a link it does not have.
+ */
+const infoFromPolicy = (policy: ReleasePolicy): UpdateInfo => ({
+  hasUpdate: true,
+  currentVersion: getAppVersion(),
+  latestVersion: policy.latestVersion,
+  releaseNotes: policy.releaseNotes,
+  releaseName: `Version ${policy.latestVersion}`,
+  releaseDate: policy.publishedAt ?? '',
+  downloadUrl: policy.downloadUrl,
+  releaseUrl: '',
+  assetSize: policy.sizeBytes,
+});
 
 export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => {
   const { width: windowWidth } = useWindowDimensions();
@@ -58,6 +77,8 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
 
   const [updaterOpen, setUpdaterOpen] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updatePolicy, setUpdatePolicy] = useState<ReleasePolicy | null>(null);
+  const [updateMandatory, setUpdateMandatory] = useState(false);
   const drawDoneRef = useRef(false);
   const bootDoneRef = useRef(false);
   const didStartExitRef = useRef(false);
@@ -106,9 +127,18 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   }, []);
 
   const handleCloseUpdater = useCallback(() => {
+    // Belt and braces: the mandatory modal never renders a close affordance,
+    // and closing it is not a path into the app even if something calls this.
+    if (updateMandatory) return;
     setUpdaterOpen(false);
     void finishBoot();
-  }, [finishBoot]);
+  }, [finishBoot, updateMandatory]);
+
+  // A mandatory update has no way into the app, so the only thing Exit can
+  // honestly do is close it. There is no "continue anyway" behind it.
+  const handleExitApp = useCallback(() => {
+    BackHandler.exitApp();
+  }, []);
 
   const handleSkipVersion = useCallback(async () => {
     if (updateInfo?.latestVersion) {
@@ -146,16 +176,30 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
 
     let cancelled = false;
     void (async () => {
-      const info = await checkUpdatesSafe();
+      const decision = await checkPolicySafe();
       if (cancelled) return;
 
-      if (info?.hasUpdate) {
-        const skipped = await isSkippedVersion(info.latestVersion);
+      // `unknown` and `upToDate` both continue: not knowing the release state
+      // is never a reason to hold the door shut, and never a claim of being current either.
+      if (
+        decision &&
+        (decision.verdict === 'mandatory' || decision.verdict === 'optional') &&
+        decision.policy
+      ) {
+        const policy = decision.policy;
+        // Only an optional update may be skipped, and a skip recorded for
+        // another verdict cannot carry over into a mandatory one.
+        const skippable = !decision.blocks;
+        const skipped = skippable
+          ? await isSkippedVersion(policy.latestVersion)
+          : false;
         if (cancelled) return;
         if (!skipped) {
-          await clearSkippedVersion();
+          if (skippable) await clearSkippedVersion();
           if (cancelled) return;
-          setUpdateInfo(info);
+          setUpdateInfo(infoFromPolicy(policy));
+          setUpdatePolicy(policy);
+          setUpdateMandatory(decision.blocks);
           setUpdaterOpen(true);
           return;
         }
@@ -214,7 +258,10 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         visible={updaterOpen}
         onClose={handleCloseUpdater}
         initialUpdateInfo={updateInfo}
-        onSkipVersion={handleSkipVersion}
+        onSkipVersion={updateMandatory ? undefined : handleSkipVersion}
+        policy={updatePolicy}
+        mandatory={updateMandatory}
+        onExit={handleExitApp}
       />
     </Box>
   );
