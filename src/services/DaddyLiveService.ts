@@ -28,12 +28,19 @@ export interface LiveChannel {
   letter?: string;
   watchUrl?: string;
   playerUrl?: string;
-  /** Direct HLS/DASH URL for M3U playlist channels (`m3u:` ids). */
+  /** Direct HLS/DASH URL for playlist channels (`iptv:` ids). */
   streamUrl?: string;
   categories: string[];
   eventTitles: string[];
   nowPlaying?: string;
   nextUp?: string;
+  logoUrl?: string;
+  country?: string;
+  language?: string;
+  /** Which playlists listed this channel; kept for attribution after merging. */
+  sourceIds?: string[];
+  /** Headers some playlist streams require (User-Agent / Referer). */
+  headers?: Record<string, string>;
 }
 
 export interface LiveEpgChannel {
