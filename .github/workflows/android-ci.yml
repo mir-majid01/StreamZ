@@ -122,10 +122,13 @@ jobs:
           printf 'sha256=%s\nbytes=%s\n' "$DIGEST" "$BYTES" >> "$GITHUB_OUTPUT"
           echo "built APK sha256=$DIGEST size=$BYTES"
 
+      # The checksum records the bare file name so it stays usable next to the APK, and
+      # `sha256sum -c` resolves names against the working directory, so it has to run there.
       - name: Verify the digest file this run produced
         run: |
           set -euo pipefail
-          sha256sum -c android/app/build/outputs/apk/release/app-release.apk.sha256
+          cd android/app/build/outputs/apk/release
+          sha256sum -c app-release.apk.sha256
 
       - uses: actions/upload-artifact@v4
         with:
