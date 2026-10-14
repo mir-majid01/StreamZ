@@ -58,9 +58,15 @@ export interface ActivateResult {
   /**
    * The length of the term in days, so a client can show how much of it is left rather
    * than only when it ends. Read from the key document — the one place the admin actually
-   * set it — and null for every refusal, where no term was granted.
+   * set it — and null for every refusal, where no term was granted. This is durationMs
+   * rounded up to whole days, so use [durationMs] when the remainder matters.
    */
   durationDays: number | null;
+  /**
+   * The authoritative term length. Keys minted before sub-day durations existed derive it
+   * from durationDays, so this is never null when a term was granted.
+   */
+  durationMs: number | null;
 }
 
 export interface UserDoc {
@@ -90,6 +96,8 @@ export interface SubscriptionKeyDoc {
   keyHash: string;
   status: KeyStatus;
   durationDays: number;
+  /** The authoritative term. Absent on keys minted before sub-day durations existed. */
+  durationMs?: number | null;
   createdAt: number;
   createdBy: string;
   batchId?: string | null;

@@ -60,6 +60,13 @@ service cloud.firestore {
       return id.matches('^[0-9a-f]{64}$');
     }
 
+    // Keys minted before sub-day durations existed carry only durationDays. Reading the
+    // length through this instead of `data.durationMs` keeps them activatable after the
+    // change instead of erroring the rule open on a missing field.
+    function keyDurationMs(data) {
+      return 'durationMs' in data ? data.durationMs : data.durationDays * 86400000;
+    }
+
     // Documents minted before the rotation counter existed read as zero rather than
     // erroring out, which would silently freeze every activation on legacy accounts.
     function rotationsOf(data) {
@@ -177,17 +184,25 @@ service cloud.firestore {
       // the server clock reaches the instant the device stamped it. A strict comparison
       // therefore refuses honest mints at random, so a bounded skew window is allowed.
       // Five minutes matches the window the activation branch already grants.
+      //
+      // durationMs is the authoritative term and durationDays its whole-day ceiling. Keeping
+      // durationDays bounded and mutually consistent with durationMs means the legacy readers
+      // that only understand days still see a true upper bound, and a mint cannot claim a
+      // 30-day label around a 5-minute term.
       allow create: if isKeyStaff()
         && isHash(keyId)
         && request.resource.data.keyHash == keyId
         && request.resource.data.status == 'UNUSED'
         && request.resource.data.durationDays >= 1
         && request.resource.data.durationDays <= 3650
+        && request.resource.data.durationMs >= 300000
+        && request.resource.data.durationMs > (request.resource.data.durationDays - 1) * 86400000
+        && request.resource.data.durationMs <= request.resource.data.durationDays * 86400000
         && request.resource.data.createdAt <= request.time.toMillis() + 300000
         && !('uid' in request.resource.data)
         && !('activatedAt' in request.resource.data)
         && request.resource.data.keys().hasAll([
-          'keyHash', 'status', 'durationDays', 'createdAt', 'createdBy'
+          'keyHash', 'status', 'durationDays', 'durationMs', 'createdAt', 'createdBy'
         ]);
 
       // Two very different writes share this path and must not be confused:
@@ -196,6 +211,7 @@ service cloud.firestore {
         isKeyStaff()
         && request.resource.data.keyHash == resource.data.keyHash
         && request.resource.data.durationDays == resource.data.durationDays
+        && keyDurationMs(request.resource.data) == keyDurationMs(resource.data)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.status in ['UNUSED', 'ACTIVE', 'EXPIRED', 'REVOKED']
       ) || (
@@ -207,6 +223,7 @@ service cloud.firestore {
         // Admin-owned fields are immutable under a subscriber write.
         && request.resource.data.keyHash == resource.data.keyHash
         && request.resource.data.durationDays == resource.data.durationDays
+        && keyDurationMs(request.resource.data) == keyDurationMs(resource.data)
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.createdBy == resource.data.createdBy
         // Duration arithmetic is checked in the database's own units. activatedAt comes
@@ -216,7 +233,7 @@ service cloud.firestore {
         && request.resource.data.activatedAt <= request.time.toMillis() + 300000
         && request.resource.data.activatedAt >= request.time.toMillis() - 300000
         && request.resource.data.expiresAt
-             == request.resource.data.activatedAt + resource.data.durationDays * 86400000
+             == request.resource.data.activatedAt + keyDurationMs(resource.data)
         && request.resource.data.installationId.size() >= 8
         // Everything else the minting side wrote has to survive the merge.
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
@@ -342,6 +359,43 @@ service cloud.firestore {
     match /contentStats/{contentId} {
       allow read: if isStaff();
       allow write: if false;
+    }
+
+    // ------------------------------------------------------------------ release policy
+
+    // The single document an unsigned-in device is allowed to read. A version floor has to be
+    // checkable before any sign-in exists — a revoked session or a wrong device clock must not
+    // be able to hide a mandatory update — and everything the document holds (version
+    // numbers, an https download URL, digests) is public information about a release the user
+    // is being asked to install. Public read is pinned to this one document id, so no other
+    // document in the collection becomes reachable and `/config` stays sign-in only.
+    //
+    // Version ordering cannot be compared here, so "minimum must not exceed latest" is
+    // enforced twice outside the rules: by the publishing job that writes this document and
+    // by parseReleasePolicy on the device, which refuses such a policy outright.
+    match /releasePolicy/{docId} {
+      allow read: if docId == 'latest';
+
+      // Shape is checked, not trusted: a document that would make a device download an
+      // unidentifiable APK is refused at the write, so the bad state never reaches a phone.
+      allow create, update: if isAdmin()
+        && docId == 'latest'
+        && request.resource.data.minimumSupportedVersion.matches('^[0-9]+[.][0-9]+[.][0-9]+$')
+        && request.resource.data.latestVersion.matches('^[0-9]+[.][0-9]+[.][0-9]+$')
+        && request.resource.data.apkUrl.matches('^https://.+$')
+        && isHash(request.resource.data.apkSha256)
+        && isHash(request.resource.data.signingCertSha256)
+        && request.resource.data.releaseNotes is string
+        && request.resource.data.apkSizeBytes is int
+        && request.resource.data.apkSizeBytes > 0
+        && request.resource.data.keys().hasAll([
+          'minimumSupportedVersion', 'latestVersion', 'apkUrl', 'apkSha256',
+          'signingCertSha256', 'releaseNotes', 'apkSizeBytes'
+        ]);
+
+      // Withdrawing a release is a legitimate admin action, and the client reads an absent
+      // document as 'missing' — which never blocks a device and never claims currency.
+      allow delete: if isAdmin();
     }
 
     // ------------------------------------------------------------------ config + audit

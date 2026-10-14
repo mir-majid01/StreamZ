@@ -44,6 +44,7 @@ const keyDoc = (over: Record<string, unknown> = {}) => ({
   keyHash: HASH_A,
   status: 'UNUSED',
   durationDays: 30,
+  durationMs: 30 * DAY,
   createdAt: Date.now() - DAY,
   createdBy: 'owner@example.com',
   ...over,
@@ -186,6 +187,46 @@ describe('minting keys', () => {
       setDoc(doc(staff('admin'), 'subscriptionKeys', HASH_B), keyDoc({ keyHash: HASH_B, durationDays: 0 })),
     );
   });
+
+  // Sub-day terms are stored as durationMs with durationDays as its whole-day ceiling, so a
+  // 90-minute key is legal at 1 day but a 90-minute key claiming 30 days is not.
+  it('accepts a mint whose day count is the ceiling of its milliseconds', async () => {
+    await assertSucceeds(
+      setDoc(
+        doc(staff('admin'), 'subscriptionKeys', HASH_B),
+        keyDoc({ keyHash: HASH_B, durationDays: 1, durationMs: 90 * 60 * 1000 }),
+      ),
+    );
+  });
+
+  it('refuses durationMs and durationDays that disagree', async () => {
+    // Same key described as a month: the ceiling is a statement about the term, not a label.
+    await assertFails(
+      setDoc(
+        doc(staff('admin'), 'subscriptionKeys', HASH_B),
+        keyDoc({ keyHash: HASH_B, durationDays: 30, durationMs: 90 * 60 * 1000 }),
+      ),
+    );
+    // A term below the floor the generator enforces.
+    await assertFails(
+      setDoc(
+        doc(staff('admin'), 'subscriptionKeys', HASH_B),
+        keyDoc({ keyHash: HASH_B, durationDays: 1, durationMs: 60 * 1000 }),
+      ),
+    );
+  });
+
+  it('refuses a mint that omits durationMs', async () => {
+    await assertFails(
+      setDoc(doc(staff('admin'), 'subscriptionKeys', HASH_B), {
+        keyHash: HASH_B,
+        status: 'UNUSED',
+        durationDays: 30,
+        createdAt: Date.now() - DAY,
+        createdBy: 'owner@example.com',
+      }),
+    );
+  });
 });
 
 describe('reading keys', () => {
@@ -239,9 +280,12 @@ describe('activating a key', () => {
       const key = await tx.get(doc(db, 'subscriptionKeys', keyId));
       const user = await tx.get(doc(db, 'users', uid));
       const durationDays = key.data()!.durationDays as number;
+      // Mirrors src/firebase/subscriptions/api.ts: durationMs is authoritative and
+      // durationDays is only what legacy key documents carry.
+      const durationMs = (key.data()!.durationMs as number | undefined) ?? durationDays * DAY;
       tx.set(
         doc(db, 'subscriptionKeys', keyId),
-        { status: 'ACTIVE', uid, installationId, activatedAt: now, expiresAt: now + durationDays * DAY },
+        { status: 'ACTIVE', uid, installationId, activatedAt: now, expiresAt: now + durationMs },
         { merge: true },
       );
       const fields = activationFields(uid, keyId, installationId, now, durationDays);
@@ -339,6 +383,42 @@ describe('activating a key', () => {
         );
       }),
     ).rejects.toThrow();
+  });
+
+  // The expiry has to be built from durationMs now that a term can be shorter than a day.
+  it('binds a 90-minute key to exactly 90 minutes', async () => {
+    const minutes = 90 * 60 * 1000;
+    await seed('subscriptionKeys', HASH_A, keyDoc({ durationDays: 1, durationMs: minutes }));
+    const now = Date.now();
+    await activateIn(alice(), ALICE, HASH_A, 'inst-alice1', now);
+    const key = await readAsAdmin(`subscriptionKeys/${HASH_A}`);
+    expect(key.status).toBe('ACTIVE');
+    expect(key.expiresAt).toBe(now + minutes);
+  });
+
+  it('refuses a sub-day key activated as if it were a full day', async () => {
+    await seed('subscriptionKeys', HASH_A, keyDoc({ durationDays: 1, durationMs: 90 * 60 * 1000 }));
+    await expect(
+      runTransaction(alice(), async (tx: Transaction) => {
+        const now = Date.now();
+        tx.set(
+          doc(alice(), 'subscriptionKeys', HASH_A),
+          { status: 'ACTIVE', uid: ALICE, installationId: 'inst-alice1', activatedAt: now, expiresAt: now + DAY },
+          { merge: true },
+        );
+      }),
+    ).rejects.toThrow();
+  });
+
+  // Keys minted before durationMs existed carry only the day count; the rule falls back to it
+  // rather than refusing, so existing stock stays activatable across the deploy.
+  it('still activates a legacy key that carries only durationDays', async () => {
+    await seed('subscriptionKeys', HASH_A, { keyHash: HASH_A, status: 'UNUSED', durationDays: 30, createdAt: Date.now() - DAY, createdBy: 'owner@example.com' });
+    const now = Date.now();
+    await activateIn(alice(), ALICE, HASH_A, 'inst-alice1', now);
+    const key = await readAsAdmin(`subscriptionKeys/${HASH_A}`);
+    expect(key.status).toBe('ACTIVE');
+    expect(key.expiresAt).toBe(now + 30 * DAY);
   });
 
   it('refuses an activation timestamp that is not this write', async () => {
@@ -598,6 +678,91 @@ describe('staff operations, config and audit', () => {
   it('refuses an unauthenticated staff read', async () => {
     await assertFails(getDocs(collection(anon(), 'users')));
     await assertFails(getDocs(collection(anon(), 'adminAudit')));
+  });
+});
+
+describe('release policy', () => {
+  const GOOD = {
+    minimumSupportedVersion: '2.0.0',
+    latestVersion: '2.3.0',
+    apkUrl: 'https://github.com/mir-majid01/StreamZ/releases/download/v2.3.0/app-release.apk',
+    apkSha256: HASH_A,
+    signingCertSha256: HASH_B,
+    releaseNotes: 'Playback fixes',
+    apkSizeBytes: 43_565_205,
+  };
+
+  it('lets an unsigned-in device read the one policy document', async () => {
+    // A mandatory update has to be enforceable before sign-in, and nothing else
+    // in this collection is public.
+    await seed('releasePolicy', 'latest', GOOD);
+    await assertSucceeds(getDoc(doc(anon(), 'releasePolicy', 'latest')));
+  });
+
+  it('keeps every other document in that collection unreachable', async () => {
+    await seed('releasePolicy', 'latest', GOOD);
+    await seed('releasePolicy', 'draft', GOOD);
+    await assertFails(getDoc(doc(anon(), 'releasePolicy', 'draft')));
+    await assertFails(getDoc(doc(alice(), 'releasePolicy', 'draft')));
+    await assertFails(getDocs(collection(anon(), 'releasePolicy')));
+  });
+
+  it('does not make the rest of the database public as a side effect', async () => {
+    await seed('config', 'app', {
+      offlineGraceMinutes: 1440,
+      keyDurationDays: 30,
+      maxInstallationRotations: 2,
+    });
+    await assertFails(getDoc(doc(anon(), 'config', 'app')));
+    await assertFails(getDoc(doc(anon(), 'users', ALICE)));
+  });
+
+  it('accepts a well-formed policy from an admin', async () => {
+    await assertSucceeds(setDoc(doc(staff('admin'), 'releasePolicy', 'latest'), GOOD));
+  });
+
+  it('refuses a policy that could not survive a verified install', async () => {
+    const bad = [
+      { apkUrl: 'http://github.com/example/app-release.apk' },
+      { apkSha256: '' },
+      { apkSha256: 'not-hex-at-all' },
+      { apkSha256: 'a'.repeat(63) },
+      // Upper case would be normalised by the client, so the write demands the
+      // canonical form instead of letting two spellings of one digest coexist.
+      { apkSha256: 'A'.repeat(64) },
+      { signingCertSha256: 'zz' },
+      { minimumSupportedVersion: 'v2.0.0' },
+      { latestVersion: '2.3' },
+      { apkSizeBytes: '43565205' },
+      { apkSizeBytes: 0 },
+      { releaseNotes: 42 },
+    ];
+    for (const over of bad) {
+      await assertFails(setDoc(doc(staff('admin'), 'releasePolicy', 'latest'), { ...GOOD, ...over }));
+    }
+  });
+
+  it('refuses a write missing any required field', async () => {
+    for (const field of Object.keys(GOOD)) {
+      const partial = { ...GOOD } as Record<string, unknown>;
+      delete partial[field];
+      await assertFails(setDoc(doc(staff('admin'), 'releasePolicy', 'latest'), partial));
+    }
+  });
+
+  it('refuses everyone who is not an admin, including other staff', async () => {
+    await assertFails(setDoc(doc(staff('manager'), 'releasePolicy', 'latest'), GOOD));
+    await assertFails(setDoc(doc(staff('support'), 'releasePolicy', 'latest'), GOOD));
+    await assertFails(setDoc(doc(alice(), 'releasePolicy', 'latest'), GOOD));
+    await assertFails(setDoc(doc(anon(), 'releasePolicy', 'latest'), GOOD));
+    await assertFails(updateDoc(doc(alice(), 'releasePolicy', 'latest'), { latestVersion: '9.9.9' }));
+  });
+
+  it('lets only an admin withdraw a release', async () => {
+    await seed('releasePolicy', 'latest', GOOD);
+    await assertFails(deleteDoc(doc(alice(), 'releasePolicy', 'latest')));
+    await assertFails(deleteDoc(doc(staff('manager'), 'releasePolicy', 'latest')));
+    await assertSucceeds(deleteDoc(doc(staff('admin'), 'releasePolicy', 'latest')));
   });
 });
 
