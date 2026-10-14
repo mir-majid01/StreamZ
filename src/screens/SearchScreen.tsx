@@ -3,14 +3,17 @@ import { FlatList, useWindowDimensions } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Search as SearchIcon } from 'lucide-react-native';
+import { ArrowLeft, Search as SearchIcon } from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
 import { Center } from '@/components/ui/center';
 import { Heading } from '@/components/ui/heading';
+import { HStack } from '@/components/ui/hstack';
+import { Icon } from '@/components/ui/icon';
 import { Spinner } from '@/components/ui/spinner';
 import { Text } from '@/components/ui/text';
 import { Input, InputField, InputSlot, InputIcon } from '@/components/ui/input';
 import { ContentCard } from '@/src/components/ContentCard';
+import { Focusable } from '@/src/components/Focusable';
 import { TMDBService } from '@/src/services/TMDBService';
 import { useDebounce } from '@/src/hooks/useDebounce';
 import { useDeviceKind } from '@/src/hooks/useDeviceKind';
@@ -116,19 +119,35 @@ export const SearchScreen = () => {
       className="flex-1 bg-background"
       style={{ paddingTop: insets.top + 8, paddingHorizontal: padding }}
     >
-      <Input className="mb-4 h-12 rounded-full bg-card">
-        <InputSlot className="pl-3">
-          <InputIcon as={SearchIcon} />
-        </InputSlot>
-        <InputField
-          placeholder="Search movies & TV shows"
-          value={query}
-          onChangeText={setQuery}
-          autoCorrect={false}
-          returnKeyType="search"
-          className="text-foreground"
-        />
-      </Input>
+      {/* Search moved out of the tab bar, so on phones it is a pushed screen and
+          needs its own way back. The TV rail renders this same screen at the
+          root of `Main`, where there is nothing to go back to. */}
+      <HStack space="sm" className="mb-4 items-center">
+        {navigation.canGoBack() ? (
+          <Focusable
+            onPress={() => navigation.goBack()}
+            hitSlop={12}
+            className="rounded-full p-1"
+          >
+            <Icon as={ArrowLeft} size="xl" className="text-foreground" />
+          </Focusable>
+        ) : null}
+        <Box className="flex-1">
+          <Input className="h-12 rounded-full bg-card">
+            <InputSlot className="pl-3">
+              <InputIcon as={SearchIcon} />
+            </InputSlot>
+            <InputField
+              placeholder="Search movies & TV shows"
+              value={query}
+              onChangeText={setQuery}
+              autoCorrect={false}
+              returnKeyType="search"
+              className="text-foreground"
+            />
+          </Input>
+        </Box>
+      </HStack>
 
       {(loading || (showTrending && trendingLoading)) && (
         <Center className="flex-1">

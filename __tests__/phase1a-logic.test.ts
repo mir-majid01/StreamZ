@@ -5,7 +5,7 @@ import {
   looksPlausible,
   normalizeKeyBody,
 } from '@/src/firebase/subscriptions/keyFormat';
-import { decideGate, routeFor, shouldRevalidate } from '@/src/firebase/subscriptions/gate';
+import { decideGate, gateResetFor, routeFor, shouldRevalidate } from '@/src/firebase/subscriptions/gate';
 import { describeActivation, describeAuthError, isTransportError } from '@/src/firebase/errors';
 import { CONFIG_DEFAULTS, graceMsFrom, staleMsFrom, type AccessResult } from '@/src/firebase/models';
 
@@ -190,6 +190,45 @@ describe('units and round-trip (review findings 8, 15, 16)', () => {
     for (const raw of ['FLK-8JKM2-NPQRS-4T6VW-7XYLI', 'SZ-0JKM2-NPQRS-4T6VW-7XYZA', '8JKM2-NPQRS-4T6VW-7XYZ1']) {
       expect(normalizeKeyBody(raw)).toBeNull();
     }
+  });
+});
+
+// The gate is only enforcement if it reaches the stack from wherever the user is
+// standing. Signing out from the Settings tab used to leave the app open because the
+// old check compared against the *leaf* route, which is never a gate route.
+describe('gateResetFor', () => {
+  it('ejects a signed-out user standing on a tab inside Main', () => {
+    expect(gateResetFor('Login', 'Settings')).toBe('Login');
+    expect(gateResetFor('Login', 'Downloads')).toBe('Login');
+  });
+  it('ejects from a root-stack screen pushed deep into the app', () => {
+    expect(gateResetFor('Login', 'MyList')).toBe('Login');
+    expect(gateResetFor('Login', 'Player')).toBe('Login');
+  });
+  it('holds a revoked or grace-expired session from inside the app', () => {
+    expect(gateResetFor('Blocked', 'Settings')).toBe('Blocked');
+    expect(gateResetFor('Subscription', 'Home')).toBe('Subscription');
+  });
+  it('leaves ordinary in-app navigation alone while the session is Main', () => {
+    for (const route of ['Main', 'Home', 'Detail', 'Player', 'Settings', 'MyList']) {
+      expect(gateResetFor('Main', route)).toBeNull();
+    }
+  });
+  it('moves a user off a gate screen the session no longer points at', () => {
+    expect(gateResetFor('Main', 'Login')).toBe('Main');
+    expect(gateResetFor('Subscription', 'Login')).toBe('Subscription');
+    expect(gateResetFor('Blocked', 'Subscription')).toBe('Blocked');
+  });
+  it('does nothing when the stack already shows the gate route', () => {
+    expect(gateResetFor('Login', 'Login')).toBeNull();
+    expect(gateResetFor('Main', 'Main')).toBeNull();
+  });
+  it('never races Splash, which owns the first handoff', () => {
+    expect(gateResetFor('Login', 'Splash')).toBeNull();
+    expect(gateResetFor('Main', 'Splash')).toBeNull();
+  });
+  it('does nothing before navigation is ready', () => {
+    expect(gateResetFor('Login', undefined)).toBeNull();
   });
 });
 

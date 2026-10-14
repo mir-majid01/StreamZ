@@ -5,6 +5,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AlertCircle,
+  ArrowLeft,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -197,9 +198,23 @@ export const DownloadsScreen = () => {
 
   return (
     <Box className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-      <Heading size="2xl" bold className="mb-4 mt-4 px-4 text-foreground">
-        Downloads
-      </Heading>
+      {/* Downloads moved out of the tab bar and is now reached from Settings, so
+          on phones it is a pushed screen. The TV rail renders it in place. */}
+      <HStack space="md" className="mb-4 mt-4 items-center px-4">
+        {navigation.canGoBack() ? (
+          <Focusable
+            onPress={() => navigation.goBack()}
+            hitSlop={12}
+            className="rounded-full"
+            focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+          >
+            <Icon as={ArrowLeft} size="xl" className="text-foreground" />
+          </Focusable>
+        ) : null}
+        <Heading size="2xl" bold className="flex-1 text-foreground" numberOfLines={1}>
+          Downloads
+        </Heading>
+      </HStack>
 
       {entries.length === 0 ? (
         <Center className="flex-1 px-8">

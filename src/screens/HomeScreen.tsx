@@ -14,7 +14,10 @@ import { Button, ButtonText } from '@/components/ui/button';
 import { Center } from '@/components/ui/center';
 import { Spinner } from '@/components/ui/spinner';
 import { Text } from '@/components/ui/text';
+import { Icon } from '@/components/ui/icon';
 import { VStack } from '@/components/ui/vstack';
+import { Search as SearchIcon } from 'lucide-react-native';
+import { Focusable } from '@/src/components/Focusable';
 import { AppHeader } from '@/src/components/AppHeader';
 import { HeroCarousel } from '@/src/components/HeroCarousel';
 import { ContentRow } from '@/src/components/ContentRow';
@@ -306,6 +309,15 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
           paddingHorizontal={16}
           progress={headerProgress}
           topInset={insets.top}
+          right={
+            <Focusable
+              onPress={() => navigation.navigate('Search')}
+              hitSlop={12}
+              className="rounded-full p-1"
+            >
+              <Icon as={SearchIcon} size="xl" className="text-foreground" />
+            </Focusable>
+          }
         />
       </Box>
     </Box>

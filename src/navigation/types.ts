@@ -12,6 +12,8 @@ export type RootStackParamList = {
   Subscription: undefined;
   Blocked: undefined;
   Main: undefined;
+  Search: undefined;
+  Downloads: undefined;
   Detail: { item: MediaItem };
   ViewMore: { title: string; query: CategoryQuery };
   SubtitleSettings: undefined;

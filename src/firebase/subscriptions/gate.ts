@@ -62,6 +62,32 @@ const ROUTES: Record<GateDecision, 'Login' | 'Subscription' | 'Main' | 'Blocked'
 export const routeFor = (d: GateDecision): 'Login' | 'Subscription' | 'Main' | 'Blocked' =>
   ROUTES[d];
 
+/** The stack screens that *are* the gate, as opposed to screens that live behind it. */
+const GATE_SCREEN = new Set<string>(['Login', 'Subscription', 'Blocked']);
+
+/**
+ * The gate route the stack must show, or null when the stack is already allowed to be
+ * where it is.
+ *
+ * Comparing the session route against the *deepest* navigation route is not enough: tabs
+ * and pushed screens (`Settings`, `MyList`, `Player`) live inside `Main` and are never
+ * gate screens, so a gate that only ever fires while standing on a gate screen silently
+ * misses a sign-out, a revocation, or an expired grace window that happens mid-browsing.
+ * The rule instead is directional — from inside the app only a gate that says "you are
+ * not in" may eject you, and from a gate screen the stack must match the gate exactly.
+ *
+ * `Splash` is exempt: it performs the first handoff itself, and racing it would flash a
+ * gate screen at startup.
+ */
+export function gateResetFor(
+  sessionRoute: 'Login' | 'Subscription' | 'Main' | 'Blocked',
+  currentRoute: string | undefined,
+): 'Login' | 'Subscription' | 'Main' | 'Blocked' | null {
+  if (!currentRoute || currentRoute === 'Splash') return null;
+  if (GATE_SCREEN.has(currentRoute)) return currentRoute === sessionRoute ? null : sessionRoute;
+  return sessionRoute === 'Main' ? null : sessionRoute;
+}
+
 export function shouldRevalidate(
   lastValidatedAtMs: number | null,
   nowMs: number,
