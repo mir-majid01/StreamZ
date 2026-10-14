@@ -96,17 +96,23 @@ export const AuthBackdrop = ({ anchor = 'high' }: { anchor?: 'high' | 'low' }) =
 );
 
 /**
- * Entrance: 16px up plus a fade on the design's curve, staggered by `delay`. A
+ * Entrance: a rise plus a fade on the design's curve, staggered by `delay`. A
  * screen wraps its blocks in this to sequence a reveal without any child having
- * to know the timeline.
+ * to know the timeline. The defaults are the auth flow's travel and duration;
+ * other mockups specify their own, so `distance`/`duration` can override them.
  */
 export const RiseIn = ({
   delay = 0,
+  distance = 16,
+  duration = 750,
   reduced = false,
   children,
   style,
 }: {
   delay?: number;
+  /** Travel in px; the mockups specify 14–16 depending on the screen. */
+  distance?: number;
+  duration?: number;
   reduced?: boolean;
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -117,12 +123,12 @@ export const RiseIn = ({
       shown.value = 1;
       return;
     }
-    shown.value = withDelay(delay, withTiming(1, { duration: 750, easing: RISE_CURVE }));
-  }, [shown, delay, reduced]);
+    shown.value = withDelay(delay, withTiming(1, { duration, easing: RISE_CURVE }));
+  }, [shown, delay, duration, reduced]);
 
   const animated = useAnimatedStyle(() => ({
     opacity: shown.value,
-    transform: [{ translateY: (1 - shown.value) * 16 }],
+    transform: [{ translateY: (1 - shown.value) * distance }],
   }));
 
   return <Animated.View style={[animated, style]}>{children}</Animated.View>;

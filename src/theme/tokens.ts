@@ -83,6 +83,29 @@ export const AUTH = {
   badgeGreenEdge: 'rgba(46,220,140,0.25)',
 } as const;
 
+/**
+ * Settings screen palette (design/settings/Settings.dc.html). Only the values the
+ * mockup does not already share with AUTH/SURFACE are listed here — the screen
+ * imports the shared ones, so a single edit keeps both surfaces in step.
+ */
+export const SETTINGS = {
+  /** Account card face, top → bottom. One stop lighter than AUTH's panel. */
+  accountTop: '#151518',
+  accountBottom: '#0F0F12',
+  groupEdge: '#1F1F25',
+  rowDivider: '#1C1C21',
+  iconTile: '#1A1A1F',
+  iconStroke: '#E4E4E9',
+  chevron: '#6B6B74',
+  /** Pointer hover, and the D-pad focus fill. */
+  hover: '#18181C',
+  pressed: '#1E1E23',
+  /** The account card warms rather than brightens when hovered. */
+  accountEdgeHover: '#3A2327',
+  /** One red bloom off-canvas at the top-right, same hue as the CTA ramp. */
+  glow: 'rgba(255,45,70,0.16)',
+} as const;
+
 /** §9: the accent gradient is reserved — CTA, active nav, highlights, logo. */
 export const GRADIENT = {
   accent: [BRAND_COLOR.bright, BRAND_COLOR.primary, BRAND_COLOR.dark] as const,
