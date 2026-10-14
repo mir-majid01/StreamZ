@@ -135,14 +135,17 @@ These are blockers, not caveats to write around:
   Pinning that in a policy would be theatre: the key is public, so it proves nothing about who built
   the file, and the pin would have to be broken the moment a real keystore appears. A release
   keystore, held in CI secrets rather than committed, has to come first.
-- **The module has never been compiled.** Autolinking is now proven: `expo-modules-autolinking
-  resolve -p android` returns 21 packages and lists `apk-integrity` with
+- **The module compiles in CI but has never run on a device.** Autolinking is proven:
+  `expo-modules-autolinking resolve -p android` returns 21 packages and lists `apk-integrity` with
   `sourceDir: modules/apk-integrity/android`. It previously returned 20 because my `build.gradle`
   sat at the module root — the Android resolver only links a default project when
   `android/build.gradle` exists (`platforms/android/android.js`, `isAndroidProject`). No prebuild and
-  no `settings.gradle` edit were needed. What is still unproven is that `ApkIntegrityModule.kt`
-  compiles and registers inside a real APK; only a CI build shows that. Until it does, integrity
-  checks return `not_measured` and installation is refused.
+  no `settings.gradle` edit were needed. CI run 33 then built `:apk-integrity` into the release APK
+  (an earlier run failed on two Android API names I had invented; `SigningInfo` in android-37.0 has
+  exactly one member, `apkContentsSigners`, and that is now the only path on API 28+). What is still
+  unproven is the runtime behaviour: whether `inspectApk` returns a real digest, package name and
+  signer fingerprint on a physical device. Until that is verified, integrity checks are assumed to
+  return `not_measured` and installation is refused.
 - **Firestore rules are prepared, not deployed.** The `releasePolicy/{docId}` block in
   `firestore.rules` grants public read of exactly `releasePolicy/latest` (nothing else in the
   collection; `/config` stays sign-in only) and admin-only writes with shape validation. Deploying
