@@ -56,7 +56,8 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const deviceKind = useDeviceKind();
-  const { hero, rows, loading, error, refreshing, refresh, prefetch } = useHomeData();
+  const { hero, rows, loading, error, notice, canRetry, refreshing, refresh, prefetch } =
+    useHomeData();
   const { items: myList, isInList, toggle } = useMyList();
   const { entries: continueWatching, remove: removeContinue } =
     useContinueWatching();
@@ -141,9 +142,13 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
       <Center className="flex-1 bg-background px-8">
         <VStack space="lg" className="items-center">
           <Text className="text-center text-muted-foreground">{error}</Text>
-          <Button variant="outline" onPress={refresh} isDisabled={refreshing}>
-            <ButtonText>{refreshing ? 'Retrying…' : 'Try again'}</ButtonText>
-          </Button>
+          {/* Held back when the reason cannot retry itself (no key in the build,
+              or TMDB refusing it) — a button that only fails again is noise. */}
+          {canRetry ? (
+            <Button variant="outline" onPress={refresh} isDisabled={refreshing}>
+              <ButtonText>{refreshing ? 'Retrying…' : 'Try again'}</ButtonText>
+            </Button>
+          ) : null}
         </VStack>
       </Center>
     );
@@ -237,6 +242,16 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
         </Box>
 
         <Box className="mt-4">
+          {/* A partially-loaded feed says which half is missing and why, instead
+              of either hiding it or blanking out the rows that did arrive. */}
+          {notice ? (
+            <Box className="mx-4 mb-3 rounded-md border border-border bg-card px-3 py-2">
+              <Text size="xs" className="text-muted-foreground">
+                {notice}
+              </Text>
+            </Box>
+          ) : null}
+
           <BrowseChips
             deviceKind={deviceKind}
             onSelect={(title, query) =>

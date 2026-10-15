@@ -2,18 +2,22 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { buildHomeFeed, type HomeRowSpec } from '@/src/config/homeFeed';
+import { fetchCategoryPage, type CategoryQuery } from '@/src/services/categories';
 import {
-  fetchCategoryPage,
-  tagMedia,
-  type CategoryQuery,
-} from '@/src/services/categories';
-import { TMDBService } from '@/src/services/TMDBService';
+  describeWave1Failures,
+  fetchHomeWave1,
+  posterFailureNotice,
+  wave1IsBlocked,
+  wave1Retryable,
+} from '@/src/services/homeFeedFetch';
+import { POSTER_FAILURE_THRESHOLD, subscribeImageHealth } from '@/src/utils/imageHealth';
 import type { MediaItem } from '@/src/types';
 import { getRegionName, useCatalogRegion } from '@/src/hooks/useCatalogRegion';
 
@@ -30,7 +34,15 @@ interface HomeDataContextValue {
   hero: MediaItem[];
   rows: HomeRow[];
   loading: boolean;
+  /** Set only when nothing loaded at all — Home replaces the feed with a retry. */
   error: string | null;
+  /**
+   * A half-loaded feed says so here instead of hiding it: one section failing
+   * used to be reported as a whole-feed error, and posters failing was silent.
+   */
+  notice: string | null;
+  /** False when the failure was a missing/refused key: retrying repeats it. */
+  canRetry: boolean;
   refreshing: boolean;
   /** Splash-blocking: regional popular movies + TV → hero + country Top 10s. */
   prefetch: () => Promise<void>;
@@ -45,6 +57,8 @@ const HomeDataContext = createContext<HomeDataContextValue>({
   rows: [],
   loading: true,
   error: null,
+  notice: null,
+  canRetry: true,
   refreshing: false,
   prefetch: async () => {},
   refresh: () => {},
@@ -83,11 +97,29 @@ export const HomeDataProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [contentNotice, setContentNotice] = useState<string | null>(null);
+  const [canRetry, setCanRetry] = useState(true);
+  // Poster loads report through imageHealth (a failed <Image> never reaches this
+  // hook), so content failures and CDN failures are combined into one honest line.
+  const [failedPosters, setFailedPosters] = useState(0);
+
+  useEffect(
+    () => subscribeImageHealth((count) => setFailedPosters(count)),
+    [],
+  );
 
   const filledRef = useRef<Map<string, HomeRow>>(new Map());
   const wave1PromiseRef = useRef<Promise<void> | null>(null);
   const wave1DoneRef = useRef(false);
   const wave2GenerationRef = useRef(0);
+
+  const notice = useMemo(() => {
+    const parts = [
+      contentNotice,
+      posterFailureNotice(failedPosters, POSTER_FAILURE_THRESHOLD),
+    ].filter(Boolean);
+    return parts.length ? parts.join(' ') : null;
+  }, [contentNotice, failedPosters]);
 
   const commitRows = useCallback(() => {
     setRows(assembleRows(feedRef.current, filledRef.current));
@@ -112,27 +144,32 @@ export const HomeDataProvider = ({ children }: { children: ReactNode }) => {
     [commitRows],
   );
 
-  const loadWave1 = useCallback(async () => {
-    const regionCode = regionRef.current;
-    const [movies, tv] = await Promise.all([
-      TMDBService.getPopularMovies(1, regionCode),
-      TMDBService.getPopularTVShows(1, regionCode),
-    ]);
+  /**
+   * Movies and TV are fetched independently, so one broken half of the feed can
+   * no longer hide the other. Never throws: a blocked feed is reported through
+   * `error` with the reason TMDB or the network actually gave.
+   */
+  const loadWave1 = useCallback(async (): Promise<boolean> => {
+    const wave = await fetchHomeWave1(regionRef.current);
+    const blocked = wave1IsBlocked(wave);
+    const sentence = describeWave1Failures(wave.failures);
 
-    const popularMovies = tagMedia(movies.results, 'movie');
-    const popularTv = tagMedia(tv.results, 'tv');
-    setHero(popularMovies.slice(0, HERO_COUNT));
+    setHero(wave.movies.slice(0, HERO_COUNT));
 
     const next = new Map<string, HomeRow>();
     for (const spec of feedRef.current) {
       if (spec.wave !== 1) continue;
-      const data =
-        spec.query.kind === 'popularTv' ? popularTv : popularMovies;
+      const data = spec.query.kind === 'popularTv' ? wave.tv : wave.movies;
       if (!data.length) continue;
       next.set(spec.id, rowFromSpec(spec, data));
     }
     filledRef.current = next;
     commitRows();
+
+    setError(blocked ? (sentence ?? 'No titles are available right now.') : null);
+    setContentNotice(blocked ? null : sentence);
+    setCanRetry(wave1Retryable(wave.failures));
+    return blocked;
   }, [commitRows]);
 
   const prefetch = useCallback(async () => {
@@ -141,15 +178,15 @@ export const HomeDataProvider = ({ children }: { children: ReactNode }) => {
 
     const run = (async () => {
       try {
-        await loadWave1();
+        const blocked = await loadWave1();
         wave1DoneRef.current = true;
-        wave2GenerationRef.current += 1;
-        loadWave2(wave2GenerationRef.current);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'Failed to load content.',
-        );
-        // Soft-fail: Splash still enters Main; Home shows retry.
+        // One attempt per session: the request layer already retried transient
+        // failures, and a key or network that is simply absent will not fix
+        // itself before the next explicit refresh.
+        if (!blocked) {
+          wave2GenerationRef.current += 1;
+          loadWave2(wave2GenerationRef.current);
+        }
       } finally {
         setLoading(false);
       }
@@ -169,13 +206,9 @@ export const HomeDataProvider = ({ children }: { children: ReactNode }) => {
     wave2GenerationRef.current += 1;
     void (async () => {
       try {
-        await loadWave1();
+        const blocked = await loadWave1();
         wave1DoneRef.current = true;
-        loadWave2(wave2GenerationRef.current);
-      } catch (err) {
-        setError(
-          err instanceof Error ? err.message : 'Failed to load content.',
-        );
+        if (!blocked) loadWave2(wave2GenerationRef.current);
       } finally {
         setRefreshing(false);
         setLoading(false);
@@ -189,11 +222,13 @@ export const HomeDataProvider = ({ children }: { children: ReactNode }) => {
       rows,
       loading,
       error,
+      notice,
+      canRetry,
       refreshing,
       prefetch,
       refresh,
     }),
-    [hero, rows, loading, error, refreshing, prefetch, refresh],
+    [hero, rows, loading, error, notice, canRetry, refreshing, prefetch, refresh],
   );
 
   return (

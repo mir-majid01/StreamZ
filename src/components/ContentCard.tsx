@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Pressable } from 'react-native';
 import { X } from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
@@ -8,6 +9,7 @@ import { VStack } from '@/components/ui/vstack';
 import { Icon } from '@/components/ui/icon';
 import { Focusable } from '@/src/components/Focusable';
 import { TMDBService } from '@/src/services/TMDBService';
+import { reportImageFailure } from '@/src/utils/imageHealth';
 import { getTitle, type MediaItem } from '@/src/types';
 import { POSTER_ASPECT_RATIO } from '@/src/utils/responsive';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
@@ -46,6 +48,10 @@ export const ContentCard = ({
 }: ContentCardProps) => {
   const posterUrl = TMDBService.getImageUrl(item.poster_path, 'w300');
   const height = width * POSTER_ASPECT_RATIO;
+  // A poster URL that exists but cannot be fetched used to render an empty grey
+  // box: indistinguishable from missing artwork and with nothing to say about it.
+  const [imageFailed, setImageFailed] = useState(false);
+  const showFallback = !posterUrl || imageFailed;
 
   return (
     <Focusable
@@ -68,14 +74,7 @@ export const ContentCard = ({
           className="overflow-hidden rounded-md bg-card"
           style={{ width, height }}
         >
-          {posterUrl ? (
-            <Image
-              source={{ uri: posterUrl }}
-              alt={getTitle(item)}
-              resizeMode="cover"
-              className="h-full w-full"
-            />
-          ) : (
+          {showFallback ? (
             <Center className="h-full w-full p-2">
               <Text
                 size="xs"
@@ -85,6 +84,17 @@ export const ContentCard = ({
                 {getTitle(item)}
               </Text>
             </Center>
+          ) : (
+            <Image
+              source={{ uri: posterUrl }}
+              alt={getTitle(item)}
+              resizeMode="cover"
+              className="h-full w-full"
+              onError={() => {
+                setImageFailed(true);
+                reportImageFailure();
+              }}
+            />
           )}
           {caption ? (<Box
                 className="absolute bottom-0 left-0 right-0 h-1 bg-muted/60 justify-center px-1"
