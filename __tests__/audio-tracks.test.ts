@@ -9,6 +9,7 @@
  */
 import type { AudioTrack } from 'react-native-video';
 import {
+  audioTracksNotice,
   resolveActiveAudioIndex,
   toAudioTrackOptions,
 } from '@/src/utils/audioTracks';
@@ -103,5 +104,23 @@ describe('resolveActiveAudioIndex', () => {
 
   it('still reports a pick the player has since marked selected', () => {
     expect(resolveActiveAudioIndex(TRACKS, 1)).toBe(1);
+  });
+});
+
+describe('audioTracksNotice', () => {
+  it('says nothing when there is something to pick', () => {
+    expect(audioTracksNotice(2, true)).toBeNull();
+  });
+
+  it('separates a stream with no separable audio from one not yet reported', () => {
+    // Both render as an empty list, and only one of them is a fact about the stream.
+    expect(audioTracksNotice(0, true)).toContain('no separate audio tracks');
+    expect(audioTracksNotice(0, false)).toContain('once the stream has reported');
+  });
+
+  it('does not claim a track count it was not given', () => {
+    // A report of zero tracks is not evidence of "one muxed track" — saying that
+    // would describe the stream, not what the player said.
+    expect(audioTracksNotice(0, true)).not.toMatch(/muxed|one track/i);
   });
 });

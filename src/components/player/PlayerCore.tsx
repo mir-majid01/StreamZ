@@ -64,6 +64,7 @@ import { useControlsVisibility } from '@/src/components/player/useControlsVisibi
 import { useTVRemote } from '@/src/components/player/useTVRemote';
 import { isRtlLanguage } from '@/src/constants/languages';
 import {
+  audioTracksNotice,
   resolveActiveAudioIndex,
   toAudioTrackOptions,
 } from '@/src/utils/audioTracks';
@@ -294,11 +295,15 @@ export const PlayerCore = ({
   );
 
   const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
+  // Whether the player has answered at all. Without it an empty menu cannot tell
+  // "this stream has no separable audio" from "tracks have not arrived yet".
+  const [audioTracksReported, setAudioTracksReported] = useState(false);
   const [selectedAudioIndex, setSelectedAudioIndex] = useState<number | null>(
     null,
   );
   const onAudioTracks = useCallback((data: OnAudioTracksData) => {
     setAudioTracks(data.audioTracks ?? []);
+    setAudioTracksReported(true);
   }, []);
 
   // What the Audio row reports and highlights. `selectedAudioIndex` is only the
@@ -1542,6 +1547,7 @@ export const PlayerCore = ({
           onSelectStreamflixSource ? handleSelectStreamflixSource : undefined
         }
         audioTracks={toAudioTrackOptions(audioTracks)}
+        audioTracksNotice={audioTracksNotice(audioTracks.length, audioTracksReported)}
         selectedAudioIndex={activeAudioIndex}
         onSelectAudio={setSelectedAudioIndex}
         variants={variants}

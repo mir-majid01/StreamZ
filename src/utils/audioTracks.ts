@@ -35,3 +35,22 @@ export const resolveActiveAudioIndex = (
   pickedIndex: number | null,
 ): number | null =>
   pickedIndex ?? tracks.find((track) => track.selected)?.index ?? null;
+
+/**
+ * What to say in the audio menu when there is nothing to pick.
+ *
+ * An empty list means one of two quite different things: the player reported its
+ * tracks and the stream carries no separable audio, or the track event has not
+ * arrived yet. Both render as a menu with one "Default" row, which is how a
+ * working player got read as a broken one.
+ *
+ * It states only what the app was told. A stream that carries one muxed track and
+ * a stream that reports nothing both produce an empty list here, and guessing
+ * between them would advertise a property of the stream nobody measured.
+ */
+export const audioTracksNotice = (trackCount: number, reported: boolean): string | null => {
+  if (trackCount > 0) return null;
+  return reported
+    ? 'This stream has no separate audio tracks to choose from.'
+    : 'Audio tracks appear once the stream has reported them.';
+};

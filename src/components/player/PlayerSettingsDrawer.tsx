@@ -107,6 +107,9 @@ interface PlayerSettingsDrawerProps {
   activeStreamflixSourceId?: string | null;
   onSelectStreamflixSource?: (id: string) => void;
   audioTracks?: AudioTrackOption[];
+  /** Shown in place of the track rows when there are none, saying which kind of
+   * "none" this is. Computed by `PlayerCore` from what the player reported. */
+  audioTracksNotice?: string | null;
   /** The track actually playing, or `null` when the user has not picked one and
    * the player never reported which of its tracks it chose. */
   selectedAudioIndex?: number | null;
@@ -160,6 +163,7 @@ export const PlayerSettingsDrawer = ({
   activeStreamflixSourceId,
   onSelectStreamflixSource,
   audioTracks = [],
+  audioTracksNotice,
   selectedAudioIndex,
   onSelectAudio,
   variants,
@@ -384,6 +388,11 @@ export const PlayerSettingsDrawer = ({
                   }}
                 />
               ))}
+              {audioTracksNotice ? (
+                <Text size="sm" className="py-2 text-muted-foreground">
+                  {audioTracksNotice}
+                </Text>
+              ) : null}
             </VStack>
           )}
 
