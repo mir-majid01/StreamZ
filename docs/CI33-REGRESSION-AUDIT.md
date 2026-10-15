@@ -159,7 +159,8 @@ What was actually broken is the reporting. `fetchSubtitleText` had **no timeout 
 
 ## Still open after these fixes
 
-- Production update checks remain **disabled**: `FEATURES.updateChecker` is `false` in `src/config/features.ts`. No Firestore rules or Functions were deployed, no release was published, and this branch was not merged.
+- Production update checks remain **disabled**: `FEATURES.updateChecker` is `false` in `src/config/features.ts`. No release was published and this branch was not merged.
+- **Deployed after the device test, on the owner's instruction:** `firestore.rules` was released to `streamz-c98b9` (`firestore: released rules firestore.rules to cloud.firestore`). Until that moment the short-key fix existed only in the repository, and activation of a four-minute key was still refused on device — the deployed ruleset predated `12972ca` and demanded `activatedAt + durationDays * 86400000`. Proven locally by running the pre-`12972ca` file against the client's exact write: four-minute grant refused, same key granted as a day accepted, thirty-day accepted. A rollback candidate is saved at `firestore.rollback-candidate.rules` outside the repo, with the caveat that it is a proven lower bound of what was live, not a capture of it — this CLI version has no rules-download command.
 - `party-server/web/*` and `skills-lock.json` are modified in the working tree by something outside this session (mtimes predate the edits here). They were left untouched and are in no commit.
 - The self-granted-expiry hole recorded in the rules notes, and the device-only checks in tasks #22-#24, #28, #29.
 
