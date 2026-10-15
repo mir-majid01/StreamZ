@@ -207,13 +207,30 @@ describe('minting keys', () => {
         keyDoc({ keyHash: HASH_B, durationDays: 30, durationMs: 90 * 60 * 1000 }),
       ),
     );
-    // A term below the floor the generator enforces.
+    // Under the one-minute floor the generator enforces.
     await assertFails(
       setDoc(
         doc(staff('admin'), 'subscriptionKeys', HASH_B),
-        keyDoc({ keyHash: HASH_B, durationDays: 1, durationMs: 60 * 1000 }),
+        keyDoc({ keyHash: HASH_B, durationDays: 1, durationMs: 30 * 1000 }),
       ),
     );
+  });
+
+  // A term short enough to test a subscription with has to pass both sides of the contract,
+  // or the only key anyone can check end to end is a month-long one.
+  it('mints the one-minute floor and a four-minute key', async () => {
+    const shortTerms: [number, string][] = [
+      [60_000, 'c'.repeat(64)],
+      [4 * 60 * 1000, 'd'.repeat(64)],
+    ];
+    for (const [durationMs, hash] of shortTerms) {
+      await assertSucceeds(
+        setDoc(
+          doc(staff('admin'), 'subscriptionKeys', hash),
+          keyDoc({ keyHash: hash, durationDays: 1, durationMs }),
+        ),
+      );
+    }
   });
 
   it('refuses a mint that omits durationMs', async () => {
@@ -396,8 +413,18 @@ describe('activating a key', () => {
     expect(key.expiresAt).toBe(now + minutes);
   });
 
-  it('refuses a sub-day key activated as if it were a full day', async () => {
-    await seed('subscriptionKeys', HASH_A, keyDoc({ durationDays: 1, durationMs: 90 * 60 * 1000 }));
+  // The four-minute case is the one that used to be refused at the door, so the expiry it
+  // produces is checked here as well: minutes, not days, and no rounding up to a day.
+  it('binds a four-minute key to exactly four minutes', async () => {
+    const ms = 4 * 60 * 1000;
+    await seed('subscriptionKeys', HASH_A, keyDoc({ durationDays: 1, durationMs: ms }));
+    const now = Date.now();
+    await activateIn(alice(), ALICE, HASH_A, 'inst-alice1', now);
+    const key = await readAsAdmin(`subscriptionKeys/${HASH_A}`);
+    expect(key.expiresAt).toBe(now + ms);
+  });
+
+  it('refuses a sub-day key activated as if it were a full day', async () => {    await seed('subscriptionKeys', HASH_A, keyDoc({ durationDays: 1, durationMs: 90 * 60 * 1000 }));
     await expect(
       runTransaction(alice(), async (tx: Transaction) => {
         const now = Date.now();

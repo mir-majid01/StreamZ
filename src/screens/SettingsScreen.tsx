@@ -68,7 +68,8 @@ import { useMyList } from '@/src/hooks/useMyList';
 import { useDownloads } from '@/src/hooks/useDownloads';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 import { signOut } from '@/src/firebase/auth/googleAuth';
-import { DAY_MS, type AccessStatus } from '@/src/firebase/models';
+import { type AccessStatus } from '@/src/firebase/models';
+import { expiryLabel, timeLeftLabel } from '@/src/utils/subscriptionTerms';
 import { loadActivationKey, maskKey } from '@/src/firebase/subscriptions/savedKey';
 import { usePlaybackSettings } from '@/src/hooks/usePlaybackSettings';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
@@ -142,17 +143,12 @@ export const SettingsScreen = () => {
     };
   }, [uid]);
   const expiresAt = access?.expiresAt ?? null;
-  const daysLeft =
-    expiresAt != null
-      ? Math.max(0, Math.ceil((expiresAt - (access?.serverTimeMs ?? Date.now())) / DAY_MS))
-      : null;
-  const expiryLabel = expiresAt != null
-    ? new Date(expiresAt).toLocaleDateString(undefined, {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-      })
-    : null;
+  const serverNow = access?.serverTimeMs ?? Date.now();
+  const remainingMs = expiresAt != null ? expiresAt - serverNow : null;
+  // A term is named in the unit it is actually measured in. `daysLeft` rounded a
+  // four-minute key up to "1 day left", which is the one case a short key exists to show.
+  const timeLeft = remainingMs != null ? timeLeftLabel(remainingMs) : null;
+  const endsLabel = expiresAt != null ? expiryLabel(expiresAt, serverNow) : null;
 
   useEffect(() => {
     setNameDraft(displayName);
@@ -166,17 +162,14 @@ export const SettingsScreen = () => {
     if (!access) return { line: 'Checking subscription…', dot: 'none' };
     if (access.status === 'authorized') {
       return {
-        line:
-          daysLeft != null
-            ? `Subscription active · ${daysLeft} day${daysLeft === 1 ? '' : 's'} left`
-            : 'Subscription active',
+        line: timeLeft != null ? `Subscription active · ${timeLeft}` : 'Subscription active',
         dot: 'live',
       };
     }
     const words: Record<AccessStatus, string> = {
       authorized: 'Subscription active',
       needsKey: 'No key activated on this account',
-      expired: expiryLabel ? `Expired · ${expiryLabel}` : 'Expired',
+      expired: endsLabel ? `Expired · ${endsLabel}` : 'Expired',
       revoked: 'Key revoked by the issuer',
       suspended: 'Key suspended',
       disabled: 'Key disabled',
@@ -185,10 +178,7 @@ export const SettingsScreen = () => {
     };
     return { line: words[access.status] ?? 'Subscription unavailable', dot: 'quiet' };
   })();
-  const finePrint = [
-    user?.email,
-    expiresAt != null ? `Ends ${expiryLabel}` : null,
-  ]
+  const finePrint = [user?.email, expiresAt != null ? `Ends ${endsLabel}` : null]
     .filter(Boolean)
     .join(' · ');
 

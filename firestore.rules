@@ -189,15 +189,21 @@ service cloud.firestore {
       // durationDays bounded and mutually consistent with durationMs means the legacy readers
       // that only understand days still see a true upper bound, and a mint cannot claim a
       // 30-day label around a 5-minute term.
+      //
+      // The one-minute floor is the same constant the generator enforces
+      // (admin-z-app SubscriptionKey.MIN_DURATION_MS), so a duration the admin UI accepts is
+      // always a duration the database will store. It is one minute rather than five because
+      // a short term is how a key gets tested, and a floor above the smallest unit the UI
+      // enters only produces a write that the rules then refuse.
       allow create: if isKeyStaff()
         && isHash(keyId)
         && request.resource.data.keyHash == keyId
         && request.resource.data.status == 'UNUSED'
         && request.resource.data.durationDays >= 1
         && request.resource.data.durationDays <= 3650
-        && request.resource.data.durationMs >= 300000
-        && request.resource.data.durationMs > (request.resource.data.durationDays - 1) * 86400000
+        && request.resource.data.durationMs >= 60000
         && request.resource.data.durationMs <= request.resource.data.durationDays * 86400000
+        && request.resource.data.durationMs > (request.resource.data.durationDays - 1) * 86400000
         && request.resource.data.createdAt <= request.time.toMillis() + 300000
         && !('uid' in request.resource.data)
         && !('activatedAt' in request.resource.data)

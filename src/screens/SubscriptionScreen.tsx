@@ -10,6 +10,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { timeLeftParts } from '@/src/utils/subscriptionTerms';
 import {
   ArrowRight,
   ChevronLeft,
@@ -62,13 +63,18 @@ const formatDate = (ms: number) => {
   }
 };
 
-/** Days remaining, rounded up so the final day of a term still reads "1 day". */
-const daysLeft = (expiresAt: number, now: number) =>
-  Math.max(0, Math.ceil((expiresAt - now) / DAY_MS));
-
 type FieldTone = 'idle' | 'error' | 'done';
 
-type Activated = { expiresAt: number | null; durationDays: number | null };
+type Activated = {
+  expiresAt: number | null;
+  durationDays: number | null;
+  /**
+   * The key's own term in milliseconds. The meter and the "time left" line are
+   * measured against this, so a four-minute key is not drawn as a nearly-empty
+   * day-long bar the second it activates.
+   */
+  durationMs: number | null;
+};
 
 /**
  * Activation and the confirmation that follows (flow screens 2 and 3).
@@ -115,7 +121,11 @@ export const SubscriptionScreen = () => {
       // event is a copy of its payload into a third-party pipeline.
       logAppEvent(AppEvent.KEY_ACTIVATION, { result: result.code });
       if (result.code === 'ACTIVATED' || result.code === 'ALREADY_OWNED') {
-        setActive({ expiresAt: result.expiresAt, durationDays: result.durationDays });
+        setActive({
+          expiresAt: result.expiresAt,
+          durationDays: result.durationDays,
+          durationMs: result.durationMs,
+        });
         return;
       }
       setError(describeActivation(result.code));
@@ -362,10 +372,13 @@ const ActivatedPanel = ({
   // Server time when we have it: a device clock a few minutes fast would
   // otherwise show one day fewer than the term actually grants.
   const now = access?.serverTimeMs ?? Date.now();
-  const remaining = active.expiresAt ? daysLeft(active.expiresAt, now) : null;
+  const remainingMs = active.expiresAt ? active.expiresAt - now : null;
+  const timeLeft = remainingMs != null ? timeLeftParts(remainingMs) : null;
+  const termMs =
+    active.durationMs ?? (active.durationDays != null ? active.durationDays * DAY_MS : null);
   const ratio =
-    active.expiresAt && active.durationDays && active.durationDays > 0
-      ? Math.min(1, Math.max(0, (active.expiresAt - now) / (active.durationDays * DAY_MS)))
+    active.expiresAt != null && termMs != null && termMs > 0
+      ? Math.min(1, Math.max(0, (active.expiresAt - now) / termMs))
       : null;
 
   // The bar arrives at 1s, sweeping on scaleX so the animation never relayouts a
@@ -407,16 +420,14 @@ const ActivatedPanel = ({
             <View style={styles.statRow}>
               <View>
                 <StreamZText style={styles.statLabel}>TIME LEFT</StreamZText>
-                {remaining != null ? (
+                {timeLeft ? (
                   <StreamZText style={styles.statValue}>
-                    {remaining}{' '}
-                    <StreamZText style={styles.statUnit}>
-                      {remaining === 1 ? 'day' : 'days'}
-                    </StreamZText>
+                    {timeLeft.value}{' '}
+                    <StreamZText style={styles.statUnit}>{timeLeft.unit}</StreamZText>
                   </StreamZText>
                 ) : null}
               </View>
-              {remaining != null && remaining > 0 ? (
+              {remainingMs != null && remainingMs > 0 ? (
                 <View style={styles.badge}>
                   <View style={styles.badgeDot} />
                   <StreamZText style={styles.badgeLabel}>Active</StreamZText>

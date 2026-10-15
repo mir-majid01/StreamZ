@@ -154,6 +154,36 @@ describe('activate', () => {
     expect(writeFor('users/u1')).toMatchObject({ subscriptionId: MOCK_KEY_HASH, status: 'active' });
   });
 
+  it('binds a sub-day key for the minutes it actually grants', async () => {
+    // durationMs is authoritative. Rounding it up to durationDays here is what made a
+    // four-minute key last a day, and the rules refuse that expiry outright.
+    mockStore[KEY_PATH] = {
+      ...unusedKey,
+      durationDays: 1,
+      durationMs: 4 * 60_000,
+    };
+    mockStore['users/u1'] = { status: 'active', installationId: 'inst-1', installationRotations: 0 };
+    mockStore['config/app'] = { maxInstallationRotations: 5 };
+    const before = Date.now();
+    const r = await activate(KEY);
+    expect(r.code).toBe('ACTIVATED');
+    expect(r.durationMs).toBe(4 * 60_000);
+    expect(r.durationDays).toBe(1);
+    expect(r.expiresAt).toBeGreaterThanOrEqual(before + 4 * 60_000);
+    expect(r.expiresAt).toBeLessThan(before + 5 * 60_000);
+    expect(writeFor(KEY_PATH)).toMatchObject({ expiresAt: r.expiresAt });
+  });
+
+  it('grants the full day to a legacy key that carries no durationMs', async () => {
+    mockStore[KEY_PATH] = { ...unusedKey, durationDays: 1 };
+    mockStore['users/u1'] = { status: 'active', installationId: 'inst-1', installationRotations: 0 };
+    mockStore['config/app'] = { maxInstallationRotations: 5 };
+    const r = await activate(KEY);
+    expect(r.code).toBe('ACTIVATED');
+    expect(r.durationMs).toBe(DAY);
+    expect(r.expiresAt).toBeGreaterThan(Date.now() + DAY - 60_000);
+  });
+
   it('creates the user document from the auth profile when there is none', async () => {
     mockStore[KEY_PATH] = unusedKey;
     mockStore['config/app'] = { maxInstallationRotations: 5 };
