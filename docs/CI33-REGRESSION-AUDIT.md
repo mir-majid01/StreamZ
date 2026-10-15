@@ -71,7 +71,7 @@ In `functions/src/manageKeys.ts`, key generation reads `durationDays` as a numbe
 Tested APK at the time of the owner's report was CI **run 34**, commit `43b2649`.
 Everything below was implemented after that build, on this branch, in five commits.
 
-**Checks that actually ran** (all against the final tree, commit `705d8a0`):
+**Checks that actually ran** (against `705d8a0`, the last commit that touches code — `bfc711e` and this document change only prose):
 
 | Command | Result |
 | --- | --- |
@@ -80,6 +80,25 @@ Everything below was implemented after that build, on this branch, in five commi
 | `npx tsc --noEmit` | clean except the pre-existing `src/hooks/useWatchNextRecommendation.ts(66,15) TS2322`, which predates this work and was not touched |
 
 This repository has **no lint script**; typecheck plus the two Jest configs above are the whole gate, and CI runs exactly those.
+
+### CI run 35 — the APK carrying all five fixes
+
+**Run 35, commit `bfc711e`, completed `success`** (https://github.com/mir-majid01/StreamZ/actions/runs/38719940884). Dispatched manually; `android-ci.yml` only auto-runs on `feat/streamz-phase-1a` and `v2.x.x`, so pushing this branch builds nothing by itself.
+
+| Job | Result | Finished |
+| --- | --- | --- |
+| Tests and typecheck | success | 2026-10-15T10:25:22Z |
+| Build APK | success | 2026-10-15T10:52:49Z |
+
+Artifacts: `streamz-release-35` (43,596,494 bytes) and `streamz-release-35-sha256`. The digest published by the run that built the file is
+
+```
+36d9dadaf4350aa6f68a38f7783efc9acba221577b7f3f21249d730f3e75ed7e  app-release.apk
+```
+
+Both jobs ran every step green, including "Digest the APK this run built" and "Verify the digest file this run produced". **No release was published and no Firestore rules were deployed** — CI only builds and digests; the updater remains off.
+
+**Gap this surfaced, and it is not cosmetic:** the job is named "Tests and typecheck" but typechecks only `functions/` (`.github/workflows/android-ci.yml:173`). There is no app-wide `npx tsc --noEmit` anywhere in CI, and the Expo build strips types without checking them — so the pre-existing `useWatchNextRecommendation.ts(66,15) TS2322` passes CI today. Adding the step would fail the build until that error is fixed, which is why it is reported rather than quietly bolted on.
 
 ### 1. Home — `41f104e`
 
