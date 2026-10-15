@@ -65,6 +65,10 @@ export const useSubtitles = ({
   const [loading, setLoading] = useState(false);
   const [loadingCues, setLoadingCues] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Separate from `error`: that one means the list never arrived, this one means a track
+  // was picked and its file could not be read or parsed. A player with an empty caption
+  // area looks identical either way, which is why a failed download used to be invisible.
+  const [cueError, setCueError] = useState<string | null>(null);
   // Once the user has interacted (including choosing "Off"), stop auto-selecting.
   const didAutoSelectRef = useRef(false);
 
@@ -165,6 +169,7 @@ export const useSubtitles = ({
   useEffect(() => {
     if (!loadCues || !selectedSourceKey) {
       setCues([]);
+      setCueError(null);
       return;
     }
     const isLocal = selectedSourceKey.startsWith('local:');
@@ -175,6 +180,7 @@ export const useSubtitles = ({
     // English to Hindi shows English captions over Hindi audio first — and if
     // the new fetch fails, `catch` clears them only after that delay.
     setCues([]);
+    setCueError(null);
 
     let cancelled = false;
     setLoadingCues(true);
@@ -184,9 +190,20 @@ export const useSubtitles = ({
         const text = isLocal
           ? await new File(uri).text()
           : await WyzieService.fetchSubtitleText(uri);
-        if (!cancelled) setCues(parseSubtitleText(text));
-      } catch {
-        if (!cancelled) setCues([]);
+        if (cancelled) return;
+        const parsed = parseSubtitleText(text);
+        // A file that arrived but yielded no cues is a different failure from one
+        // that never arrived, and both look like "no subtitles" on screen.
+        setCueError(
+          parsed.length === 0 && text.trim().length > 0
+            ? 'That file downloaded but contains no readable cues.'
+            : null,
+        );
+        setCues(parsed);
+      } catch (err) {
+        if (cancelled) return;
+        setCues([]);
+        setCueError(err instanceof Error ? err.message : 'Subtitle download failed.');
       } finally {
         if (!cancelled) setLoadingCues(false);
       }
@@ -223,5 +240,6 @@ export const useSubtitles = ({
     loading,
     loadingCues,
     error,
+    cueError,
   };
 };

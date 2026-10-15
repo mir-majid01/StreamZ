@@ -417,6 +417,7 @@ export const PlayerCore = ({
     cueAt,
     loading: loadingWyzieTracks,
     error: wyzieError,
+    cueError: wyzieCueError,
   } = useSubtitles({
     tmdbId: item.id,
     season,
@@ -563,12 +564,17 @@ export const PlayerCore = ({
   const [nativeRawText, setNativeRawText] = useState<string | null>(null);
   const [nativeVttUri, setNativeVttUri] = useState<string | null>(null);
   const [nativeVttTrackId, setNativeVttTrackId] = useState<string | null>(null);
+  // Native mode downloads the cue file here rather than in `useSubtitles`, so the
+  // failure has to be reported here too — otherwise the one render mode that hands
+  // captions to ExoPlayer is the one that can fail without saying so.
+  const [nativeSubtitleError, setNativeSubtitleError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!useNativeSidecar || !selectedWyzieTrackId || !selectedWyzieSourceUri) {
       setNativeRawText(null);
       setNativeVttUri(null);
       setNativeVttTrackId(null);
+      setNativeSubtitleError(null);
       return;
     }
 
@@ -576,6 +582,7 @@ export const PlayerCore = ({
     const sourceUri = selectedWyzieSourceUri;
     const isLocal = selectedWyzieIsLocal;
     let cancelled = false;
+    setNativeSubtitleError(null);
 
     void (async () => {
       try {
@@ -585,11 +592,12 @@ export const PlayerCore = ({
         if (cancelled) return;
         setNativeRawText(raw);
         setNativeVttTrackId(trackId);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
           setNativeRawText(null);
           setNativeVttUri(null);
           setNativeVttTrackId(null);
+          setNativeSubtitleError(err instanceof Error ? err.message : 'Subtitle download failed.');
         }
       }
     })();
@@ -627,8 +635,13 @@ export const PlayerCore = ({
             subtitleOffsetSeconds,
           );
           if (!cancelled) setNativeVttUri(uri);
-        } catch {
-          if (!cancelled) setNativeVttUri(null);
+        } catch (err) {
+          if (!cancelled) {
+            setNativeVttUri(null);
+            setNativeSubtitleError(
+              err instanceof Error ? err.message : 'Could not write the subtitle file.',
+            );
+          }
         }
       })();
     }, 300);
@@ -1541,7 +1554,7 @@ export const PlayerCore = ({
         subtitleTracks={allSubtitleOptions}
         selectedSubtitleId={selectedSubtitleId}
         subtitlesLoading={loadingWyzieTracks}
-        subtitlesError={wyzieError}
+        subtitlesError={wyzieError ?? wyzieCueError ?? nativeSubtitleError}
         onSelectSubtitle={handleSelectSubtitle}
         subtitleOffsetSeconds={subtitleOffsetSeconds}
         onChangeSubtitleOffset={setSubtitleOffsetSeconds}

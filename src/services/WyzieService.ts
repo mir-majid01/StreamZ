@@ -21,6 +21,24 @@ export class WyzieError extends Error {
   }
 }
 
+/**
+ * `fetch` rejects with a DOMException named AbortError when a signal fires, and
+ * with a plain TypeError for everything else the platform could not do. Naming
+ * the timeout as a timeout is what makes "the CDN was slow" distinguishable from
+ * "the request was blocked" on a screen that shows one line.
+ */
+const failureFor = (err: unknown, url: string, timeoutMessage: string): WyzieError => {
+  if (err instanceof Error && err.name === 'AbortError') return new WyzieError(timeoutMessage);
+  const host = (() => {
+    try {
+      return new URL(url).host;
+    } catch {
+      return 'the subtitle server';
+    }
+  })();
+  return new WyzieError(`Could not reach ${host}. ${err instanceof Error ? err.message : ''}`.trim());
+};
+
 /** Browser-like UA so Cloudflare (vdrk) does not 403 RN/okhttp fetches. */
 export const SUBTITLE_FETCH_HEADERS: Record<string, string> = {
   Accept: 'text/vtt, text/plain, application/x-subrip, application/json, */*',
@@ -52,7 +70,10 @@ class WyzieServiceImpl {
     format = 'srt',
   }: SearchParams): Promise<WyzieSubtitle[]> {
     if (!this.apiKey) {
-      throw new WyzieError('Missing Wyzie API key.');
+      throw new WyzieError(
+        'No Wyzie API key is configured. Set EXPO_PUBLIC_WYZIE_API_KEY and rebuild — ' +
+          'EXPO_PUBLIC_* values are inlined into the bundle at build time.',
+      );
     }
 
     const url = new URL(`${this.baseUrl}/search`);
@@ -74,8 +95,9 @@ class WyzieServiceImpl {
       WYZIE_SUBS_CONFIG.TIMEOUT,
     );
 
+    const requestUrl = url.toString();
     try {
-      const response = await fetch(url.toString(), {
+      const response = await fetch(requestUrl, {
         headers: { ...SUBTITLE_FETCH_HEADERS, Accept: 'application/json' },
         signal: controller.signal,
       });
@@ -88,23 +110,41 @@ class WyzieServiceImpl {
       return [];
     } catch (err) {
       if (err instanceof WyzieError) throw err;
-      throw new WyzieError('Failed to fetch subtitles.');
+      throw failureFor(err, requestUrl, 'Wyzie search timed out.');
     } finally {
       clearTimeout(timer);
     }
   }
 
+  /**
+   * Downloads the cue file itself. This needs the same timeout the search has:
+   * without one, a subtitle host that accepts the connection and never answers
+   * leaves the picker spinning, and the player looks like it has no subtitles
+   * at all rather than like one download hung.
+   */
   async fetchSubtitleText(url: string): Promise<string> {
-    const response = await fetch(url, { headers: SUBTITLE_FETCH_HEADERS });
-    if (!response.ok) {
-      throw new WyzieError(`Failed to download subtitle (${response.status})`);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), WYZIE_SUBS_CONFIG.TIMEOUT);
+    try {
+      const response = await fetch(url, {
+        headers: SUBTITLE_FETCH_HEADERS,
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        throw new WyzieError(`Failed to download subtitle (${response.status})`);
+      }
+      const text = await response.text();
+      const trimmed = text.replace(/^\uFEFF/, '').trim();
+      if (/^<!DOCTYPE html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
+        throw new WyzieError('Subtitle download returned HTML instead of cues.');
+      }
+      return text;
+    } catch (err) {
+      if (err instanceof WyzieError) throw err;
+      throw failureFor(err, url, 'Subtitle download timed out.');
+    } finally {
+      clearTimeout(timer);
     }
-    const text = await response.text();
-    const trimmed = text.replace(/^\uFEFF/, '').trim();
-    if (/^<!DOCTYPE html/i.test(trimmed) || /^<html[\s>]/i.test(trimmed)) {
-      throw new WyzieError('Subtitle download returned HTML instead of cues.');
-    }
-    return text;
   }
 }
 
