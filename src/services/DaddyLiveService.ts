@@ -1,11 +1,25 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { FLIXQUEST_CONFIG, LIVE_TV_M3U_CONFIG } from '@/src/config/env';
+import { loadPlaylistCatalogue } from '@/src/services/liveTv/playlistCatalog';
+import { resolveSources } from '@/src/services/liveTv/playlistSources';
+import { createFileTextStore } from '@/src/services/liveTv/playlistStore';
+import {
+  IPTV_ID_PREFIX,
+  migrateLegacyId,
+  rankCategories,
+  toLiveChannel,
+} from '@/src/services/liveTv/liveChannelMapper';
 
 const TAG = '[LiveTV]';
 // eslint-disable-next-line no-console
 const log = (...args: unknown[]) => console.log(TAG, ...args);
 
-const CATALOG_CACHE_KEY = 'flick.liveTv.catalog';
+/**
+ * FlixQuest channels and EPG only. The merged playlist catalogue is ~12k channels, which
+ * is past what AsyncStorage holds on Android, so its cache is the engine's own file store.
+ * v2 because the v1 key cached playlist channels under the pre-merge `m3u:` ids.
+ */
+const CATALOG_CACHE_KEY = 'flick.liveTv.catalog.v2';
 const FAVORITES_KEY = 'flick.liveTv.favorites';
 const RECENTS_KEY = 'flick.liveTv.recents';
 const CATALOG_TTL_MS = 6 * 60 * 60 * 1000;
@@ -435,100 +449,59 @@ const mergeCatalog = (
   };
 };
 
-const M3U_CATEGORY = 'PH';
-const M3U_ID_PREFIX = 'm3u:';
-const EXTINF_RE = /^#E(?:XT|CT)INF:-?\d+(?:\s+[^,]*)?,\s*(.+?)\s*$/i;
+/** A megabyte-scale playlist needs a longer budget than an API call, but not an open one. */
+const PLAYLIST_TIMEOUT_MS = 30000;
 
-const slugify = (name: string): string => {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'channel';
-};
+const playlistStore = createFileTextStore();
 
-const parseM3uPlaylist = (text: string): LiveChannel[] => {
-  const lines = text.split(/\r?\n/);
-  const channels: LiveChannel[] = [];
-  const usedIds = new Set<string>();
-  let pendingName: string | null = null;
-
-  const uniqueId = (name: string): string => {
-    const base = `${M3U_ID_PREFIX}${slugify(name)}`;
-    let id = base;
-    let n = 2;
-    while (usedIds.has(id)) {
-      id = `${base}-${n}`;
-      n += 1;
-    }
-    usedIds.add(id);
-    return id;
-  };
-
-  for (const raw of lines) {
-    const line = raw.trim();
-    if (!line) continue;
-    const inf = line.match(EXTINF_RE);
-    if (inf) {
-      pendingName = inf[1].trim();
-      continue;
-    }
-    if (line.startsWith('#')) continue;
-    if (!pendingName) continue;
-    try {
-      const href = new URL(line).href;
-      if (href.startsWith('http://') || href.startsWith('https://')) {
-        const letter = pendingName.match(/[A-Za-z0-9]/)?.[0]?.toUpperCase();
-        channels.push({
-          id: uniqueId(pendingName),
-          name: pendingName,
-          letter,
-          streamUrl: href,
-          categories: [M3U_CATEGORY],
-          eventTitles: [],
-        });
-      }
-    } catch {
-      /* skip invalid URLs */
-    }
-    pendingName = null;
+/**
+ * Reads every configured playlist through the caching catalogue engine: a source that
+ * fails keeps contributing its last good copy instead of shrinking the list, and the
+ * merged result is deduplicated by the source's own id, then stream URL, then name.
+ * The counts are logged because "the channel list did not change" is only answerable
+ * with the numbers each source actually returned.
+ */
+const fetchPlaylistChannels = async (): Promise<LiveChannel[]> => {
+  const catalogue = await loadPlaylistCatalogue(
+    resolveSources(LIVE_TV_M3U_CONFIG.overrideUrl),
+    { fetch: (url, init) => fetch(url, init), store: playlistStore, timeoutMs: PLAYLIST_TIMEOUT_MS },
+  );
+  const degraded = catalogue.outcomes
+    .filter((o) => o.state !== 'fresh')
+    .map((o) => `${o.sourceId}=${o.state}(${o.reason})`);
+  log(
+    'playlists',
+    JSON.stringify(catalogue.stats.perSource),
+    `merged=${catalogue.stats.total}`,
+    `deduped=${catalogue.stats.duplicatesRemoved}`,
+    degraded.length ? degraded.join(' ') : 'all fresh',
+  );
+  if (!catalogue.entries.length) {
+    // Say which source failed and how, because "Live TV is empty" is not actionable
+    // when one host is behind a captive portal and the other returned an HTML error page.
+    throw new Error(
+      `No Live TV playlist could be read (${degraded.join(' ') || 'no sources configured'}).`,
+    );
   }
-  return channels;
-};
-
-const fetchM3uChannels = async (): Promise<LiveChannel[]> => {
-  if (!LIVE_TV_M3U_CONFIG.enabled || !LIVE_TV_M3U_CONFIG.url) return [];
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
-  try {
-    log('GET', LIVE_TV_M3U_CONFIG.url);
-    const res = await fetch(LIVE_TV_M3U_CONFIG.url, {
-      signal: controller.signal,
-    });
-    if (!res.ok) {
-      throw new Error(`Live TV playlist request failed (${res.status}).`);
-    }
-    const text = await res.text();
-    return parseM3uPlaylist(text);
-  } finally {
-    clearTimeout(timeout);
-  }
+  return catalogue.entries.map(toLiveChannel);
 };
 
 const emptyEpg = (): LiveEpg => ({ timezone: '', days: [] });
 
-const mergeM3uIntoCatalog = (
+/**
+ * Appends the playlist channels to whatever FlixQuest returned. Categories come from what
+ * the catalogues actually carry, ranked by size and capped, so one large source cannot
+ * turn the filter row into an unusable list.
+ */
+const mergePlaylistIntoCatalog = (
   catalog: LiveCatalog,
-  m3uChannels: LiveChannel[],
+  channels: LiveChannel[],
 ): LiveCatalog => {
-  if (!m3uChannels.length) return catalog;
-  const categories = [...new Set([...catalog.categories, M3U_CATEGORY])].sort(
-    (a, b) => a.localeCompare(b),
-  );
+  if (!channels.length) return catalog;
   return {
     ...catalog,
-    channels: [...catalog.channels, ...m3uChannels],
-    categories,
+    channels: [...catalog.channels, ...channels],
+    categories: rankCategories([...catalog.channels, ...channels]),
   };
 };
 
@@ -554,95 +527,89 @@ const readCachedCatalog = async (): Promise<LiveCatalog | null> => {
 const getCatalog = async (opts?: {
   refresh?: boolean;
 }): Promise<LiveCatalog> => {
-  if (!opts?.refresh) {
-    const cached = await readCachedCatalog();
-    if (
-      cached &&
-      Date.now() - cached.fetchedAt <= CATALOG_TTL_MS &&
-      cached.channels.some((c) => c.id.startsWith(M3U_ID_PREFIX))
-    ) {
-      rememberCatalog(cached);
-      return cached;
-    }
-  }
-
   let flixCatalog: LiveCatalog | null = null;
   let flixError: unknown = null;
-  let m3uChannels: LiveChannel[] = [];
-  let m3uError: unknown = null;
+  let playlistChannels: LiveChannel[] = [];
+  let playlistError: unknown = null;
 
-  const flixTask = FLIXQUEST_CONFIG.enabled
-    ? (async () => {
-        const [channelsBody, epgBody] = await Promise.all([
-          getJson(
-            '/dlhd/channels',
-            opts?.refresh ? { refresh: 'true' } : undefined,
-          ),
-          getJson('/dlhd/epg', opts?.refresh ? { refresh: 'true' } : undefined),
-        ]);
-        const channels = (
-          Array.isArray(channelsBody.channels) ? channelsBody.channels : []
-        )
-          .map(parseChannel)
-          .filter((c): c is LiveChannel => c != null);
-        flixCatalog = mergeCatalog(channels, parseEpg(epgBody));
-      })().catch((error: unknown) => {
-        flixError = error;
-      })
-    : Promise.resolve();
+  // Only the FlixQuest half is read from AsyncStorage. Playlists always go through the
+  // catalogue engine, because that is what decides fresh-vs-last-good per source.
+  if (!opts?.refresh) flixCatalog = await readCachedCatalog();
 
-  const m3uTask = fetchM3uChannels()
+  const flixTask =
+    flixCatalog || !FLIXQUEST_CONFIG.enabled
+      ? Promise.resolve()
+      : (async () => {
+          const [channelsBody, epgBody] = await Promise.all([
+            getJson(
+              '/dlhd/channels',
+              opts?.refresh ? { refresh: 'true' } : undefined,
+            ),
+            getJson('/dlhd/epg', opts?.refresh ? { refresh: 'true' } : undefined),
+          ]);
+          const channels = (
+            Array.isArray(channelsBody.channels) ? channelsBody.channels : []
+          )
+            .map(parseChannel)
+            .filter((c): c is LiveChannel => c != null);
+          flixCatalog = mergeCatalog(channels, parseEpg(epgBody));
+        })().catch((error: unknown) => {
+          flixError = error;
+        });
+
+  const playlistTask = fetchPlaylistChannels()
     .then((channels) => {
-      m3uChannels = channels;
+      playlistChannels = channels;
     })
     .catch((error: unknown) => {
-      m3uError = error;
+      playlistError = error;
     });
 
-  await Promise.all([flixTask, m3uTask]);
+  await Promise.all([flixTask, playlistTask]);
 
-  if (!flixCatalog && !m3uChannels.length) {
-    const cached = await readCachedCatalog();
-    if (cached?.channels.length) {
-      rememberCatalog(cached);
-      return cached;
-    }
-    throw flixError ?? m3uError ?? new Error('Live TV is not configured');
+  if (!flixCatalog && !playlistChannels.length) {
+    throw flixError ?? playlistError ?? new Error('Live TV is not configured');
   }
 
-  const catalog = mergeM3uIntoCatalog(
+  const catalog = mergePlaylistIntoCatalog(
     flixCatalog ?? mergeCatalog([], emptyEpg()),
-    m3uChannels,
+    playlistChannels,
   );
   rememberCatalog(catalog);
-  AsyncStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(catalog)).catch(
-    () => {},
-  );
+  if (flixCatalog) {
+    AsyncStorage.setItem(CATALOG_CACHE_KEY, JSON.stringify(flixCatalog)).catch(
+      () => {},
+    );
+  }
   return catalog;
 };
 
-const findM3uStreamUrl = async (channelId: string): Promise<string | null> => {
+/**
+ * Locates a playlist channel's direct stream. Memory first, then the engine's cached
+ * catalogues — which is why this still resolves with no network at all.
+ */
+const findPlaylistStreamUrl = async (channelId: string): Promise<string | null> => {
   const fromMemory = lastCatalog?.find((c) => c.id === channelId)?.streamUrl;
   if (fromMemory) return fromMemory;
-  const cached = await readCachedCatalog();
-  const fromCache = cached?.channels.find((c) => c.id === channelId)?.streamUrl;
-  if (fromCache) return fromCache;
   try {
-    const fresh = await fetchM3uChannels();
-    lastCatalog = [...(lastCatalog ?? []), ...fresh];
-    return fresh.find((c) => c.id === channelId)?.streamUrl ?? null;
+    const channels = await fetchPlaylistChannels();
+    lastCatalog = [...(lastCatalog ?? []), ...channels];
+    return channels.find((c) => c.id === channelId)?.streamUrl ?? null;
   } catch {
     return null;
   }
 };
 
+const playlistHeadersOf = (channelId: string): Record<string, string> =>
+  lastCatalog?.find((c) => c.id === channelId)?.headers ?? {};
+
 const getStream = async (channelId: string): Promise<LiveStream> => {
-  if (channelId.startsWith(M3U_ID_PREFIX)) {
-    const url = await findM3uStreamUrl(channelId);
+  if (channelId.startsWith(IPTV_ID_PREFIX)) {
+    const url = await findPlaylistStreamUrl(channelId);
     if (!url) {
       throw new Error('The channel returned no playable stream.');
     }
-    return { url, headers: {}, embedUrl: '' };
+    return { url, headers: playlistHeadersOf(channelId), embedUrl: '' };
   }
   const body = await getJson(
     `/dlhd/channels/${encodeURIComponent(channelId)}/stream`,
@@ -658,11 +625,23 @@ const getStream = async (channelId: string): Promise<LiveStream> => {
   return apiStream;
 };
 
+/** An env override renames the Philippine source, so saved ids must be mapped against it. */
+const phSourceId = (): string => (LIVE_TV_M3U_CONFIG.overrideUrl ? 'custom' : 'ph');
+
+/**
+ * Rebuilds ids stored under the pre-merge `m3u:` scheme. The Philippine list declares no
+ * `tvg-id`, so its slug is unchanged and only the prefix moved — without this, a user's
+ * favourites and recents would silently empty out when the catalogues were wired in.
+ */
+const restoreSavedIds = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.map((id) => migrateLegacyId(String(id), phSourceId()))
+    : [];
+
 const getFavorites = async (): Promise<string[]> => {
   try {
     const raw = await AsyncStorage.getItem(FAVORITES_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(parsed) ? parsed.map(String) : [];
+    return restoreSavedIds(raw ? (JSON.parse(raw) as unknown) : []);
   } catch {
     return [];
   }
@@ -684,8 +663,7 @@ const toggleFavorite = async (channelId: string): Promise<string[]> => {
 const getRecents = async (): Promise<string[]> => {
   try {
     const raw = await AsyncStorage.getItem(RECENTS_KEY);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(parsed) ? parsed.map(String) : [];
+    return restoreSavedIds(raw ? (JSON.parse(raw) as unknown) : []);
   } catch {
     return [];
   }

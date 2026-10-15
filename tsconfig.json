@@ -2,6 +2,10 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
+    // scripts/verify-*.ts are run by Node directly (`node --experimental-strip-types`),
+    // and Node's ESM resolver needs the extension on every relative import. `noEmit` is
+    // already set by expo/tsconfig.base, which is what makes this legal.
+    "allowImportingTsExtensions": true,
     "paths": {
       "@/*": [
         "./*"

@@ -55,12 +55,14 @@ export const FLIXQUEST_CONFIG = {
   enabled: Boolean(process.env.EXPO_PUBLIC_FLIXQUEST_API_URL?.trim()),
 } as const;
 
-/** Remote M3U playlist merged into Live TV as the PH category. */
-const DEFAULT_LIVE_TV_M3U_URL =
-  'https://raw.githubusercontent.com/Harleythetech/IPHTV/main/ph.m3u';
-
+/**
+ * `EXPO_PUBLIC_LIVE_TV_M3U_URL` replaces the built-in Philippine playlist when set. It is
+ * an override of one source, not the whole catalogue: the community playlists in
+ * `liveTv/playlistSources` are always read, and that file owns the default URL so the
+ * list of sources is defined in exactly one place.
+ */
 export const LIVE_TV_M3U_CONFIG = {
-  url: process.env.EXPO_PUBLIC_LIVE_TV_M3U_URL?.trim() || DEFAULT_LIVE_TV_M3U_URL,
+  overrideUrl: process.env.EXPO_PUBLIC_LIVE_TV_M3U_URL?.trim() || '',
   enabled: true,
 } as const;
 
