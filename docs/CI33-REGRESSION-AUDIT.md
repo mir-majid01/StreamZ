@@ -273,21 +273,21 @@ Parsed from the three configured playlists, and sampled over HTTPS:
 | Free-TV `playlist.m3u8` | 2,023 | 1,743 (86.16 %) | 250 | 25 | 4 | 0 | 1 |
 | **Total** | **13,389** | **12,706** | **524** | **148** | **5** | **4** | **2** |
 
-Reachability of sampled stream URLs — 80 requested (15 / 45 / 20), **53 answered 2xx (66.25 %)**, 27 did not:
+Reachability of sampled stream URLs — 80 requested (15 / 45 / 20), **53 answered 2xx (66.25 %)**, 27 did not. The sample covered only the two classes the app actually relies on (`.m3u8` and extensionless); the 148 `.mpd`, 5 `.m3u`, 4 `.ts` and 2 other-progressive entries were **not** probed, so nothing here says whether those hosts are reachable.
 
 | Outcome | Count | Note |
 | --- | --- | --- |
-| 200 | 53 | Of these, exactly **one** extensionless sample came back with an HLS content type; no `.m3u8` sample reported one, because these hosts serve playlists as `text/plain` or similar — the extension, not the content type, is what the app keys on. |
-| timeout | 8 | Host accepted the connection or did not answer in 20 s. |
-| 403 | 4 | Publisher refusing a client without its expected headers. |
+| 200 | 53 | **One** extensionless sample reported an HLS content type — the single piece of evidence for the "extensionless means HLS" heuristic, which is why `liveSourceType` keeps that default and says so. The probe recorded only whether the type matched HLS; the actual `Content-Type` of the other 52 was not captured, so no claim is made about what those hosts served. |
+| timeout | 9 | No response inside the 20 s budget. |
+| 403 | 4 | Publisher refused this client. Not proven to be header-related — one sample (below) is the only evidence that any of them wanted a User-Agent. |
 | 404 | 4 | Channel gone; the catalogue still lists it. |
-| ECONNREFUSED | 4 | Host up, port closed. |
-| ENOTFOUND | 2 | Host name no longer resolves. |
+| ECONNREFUSED | 4 | Host reachable, port closed. |
+| ENOTFOUND | 3 | Host name no longer resolves — the failure mode a shared catalogue drifts into over time. |
 | 502 | 1 | Upstream of the publisher. |
-| TLS unverifiable | 1 | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — incomplete chain at the publisher. |
+| TLS unverifiable | 2 | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — incomplete certificate chain at the publisher. |
 | Required a User-Agent | 1 of 41 sampled iptv-org HLS URLs | The parser already carries `http-user-agent` / `http-referrer` from `#EXTINF` into `stream.headers`, and the player passes them through. |
 
-**What this says about "some channels don't play".** Two thirds of a random sample was reachable from a machine; a third was not, and every failure category above is on the publisher's side of the line. No client change repairs a 404, a closed port, or an expired certificate, and the app does not claim otherwise. Redirect behaviour and per-player error codes were **not** captured, because the error payload was being thrown away — see below.
+**What this says about "some channels don't play".** Two thirds of a random sample was reachable from a machine; a third was not, and every failure category above is on the publisher's side of the line. No client change repairs a 404, a closed port, or an incomplete certificate chain, and the app does not claim otherwise. Redirect behaviour was not recorded, and per-player error codes could not have been — the payload was being thrown away, see below.
 
 ### 11. Item 2, the two defects that were fixable in code
 
