@@ -19,6 +19,12 @@ import {
   type LiveChannel,
   type LiveStream,
 } from '@/src/services/DaddyLiveService';
+import { liveSourceType } from '@/src/services/liveTv/sourceType';
+import {
+  livePlaybackDetail,
+  type PlayerErrorPayload,
+} from '@/src/services/liveTv/playbackError';
+import { FONT } from '@/src/theme/tokens';
 import { forceLandscape, restoreOrientation } from '@/src/utils/orientation';
 import { isTV } from '@/src/utils/tv';
 import type { RootStackScreenProps } from '@/src/navigation/types';
@@ -36,6 +42,7 @@ export const LivePlayerScreen = ({
   const [channel, setChannel] = useState<LiveChannel>(initialChannel);
   const [stream, setStream] = useState<LiveStream | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [playerDetail, setPlayerDetail] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [paused, setPaused] = useState(false);
   const [volume, setVolume] = useState(1);
@@ -64,6 +71,7 @@ export const LivePlayerScreen = ({
   const loadStream = useCallback(async (next: LiveChannel) => {
     setLoading(true);
     setError(null);
+    setPlayerDetail(null);
     setStream(null);
     setResolvingId(next.id);
     try {
@@ -94,7 +102,7 @@ export const LivePlayerScreen = ({
     if (!stream?.url) return null;
     return {
       uri: stream.url,
-      type: /\.mpd(\?|$)/i.test(stream.url) ? 'mpd' : 'm3u8',
+      type: liveSourceType(stream.url),
       headers: stream.headers,
     };
   }, [stream]);
@@ -139,9 +147,10 @@ export const LivePlayerScreen = ({
           volume={volume}
           playInBackground={false}
           ignoreSilentSwitch="ignore"
-          onError={() =>
-            setError('This channel failed to play. Try another one.')
-          }
+          onError={(e: PlayerErrorPayload) => {
+            setError('This channel failed to play. Try another one.');
+            setPlayerDetail(livePlaybackDetail(e));
+          }}
         />
       ) : null}
 
@@ -163,6 +172,18 @@ export const LivePlayerScreen = ({
           <Text size="sm" className="mt-2 text-center text-muted-foreground">
             {error}
           </Text>
+          {playerDetail ? (
+            // Not decoration: which ExoPlayer error the stream raised is the only thing
+            // that tells a publisher outage apart from a container this device can not
+            // read, and without it every report arrives as "a channel does not work".
+            <Text
+              size="xs"
+              className="mt-3 text-center text-muted-foreground"
+              style={{ fontFamily: FONT.mono }}
+            >
+              {playerDetail}
+            </Text>
+          ) : null}
         </Center>
       ) : null}
 
