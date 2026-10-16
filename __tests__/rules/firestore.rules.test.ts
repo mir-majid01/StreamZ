@@ -55,7 +55,12 @@ const activationFields = (
   keyId: string,
   installationId: string,
   now = Date.now(),
-  durationDays = 30,
+  // The term the key actually grants, in milliseconds. This used to be a day count, which
+  // made the helper write `activatedAt + durationDays` while activate() writes
+  // `activatedAt + durationMs` — so a 90-minute key produced a one-day user document here
+  // and nothing noticed. The helper has to match the client or it tests a transaction no
+  // phone performs.
+  grantMs = 30 * DAY,
 ) => ({
   uid,
   email: uid === ALICE ? ALICE_EMAIL : 'bob@example.com',
@@ -65,7 +70,7 @@ const activationFields = (
   subscriptionId: keyId,
   installationId,
   activatedAt: now,
-  expiresAt: now + durationDays * DAY,
+  expiresAt: now + grantMs,
   lastLoginAt: now,
   lastActiveAt: now,
   appVersion: '0.1.0',
@@ -305,7 +310,7 @@ describe('activating a key', () => {
         { status: 'ACTIVE', uid, installationId, activatedAt: now, expiresAt: now + durationMs },
         { merge: true },
       );
-      const fields = activationFields(uid, keyId, installationId, now, durationDays);
+      const fields = activationFields(uid, keyId, installationId, now, durationMs);
       if (user.exists()) {
         tx.update(doc(db, 'users', uid), {
           uid: fields.uid,
@@ -411,6 +416,10 @@ describe('activating a key', () => {
     const key = await readAsAdmin(`subscriptionKeys/${HASH_A}`);
     expect(key.status).toBe('ACTIVE');
     expect(key.expiresAt).toBe(now + minutes);
+    // Boundary for the create cap: the honest client writes the identical expiry to both
+    // documents, so equality has to be accepted, not just refused-from-above.
+    const user = await readAsAdmin(`users/${ALICE}`);
+    expect(user.expiresAt).toBe(now + minutes);
   });
 
   // The four-minute case is the one that used to be refused at the door, so the expiry it
@@ -452,6 +461,68 @@ describe('activating a key', () => {
     // request.time is the only clock a rules file can trust; without this bound a device
     // could back-date an activation and stretch a 30-day key across a decade.
     await expect(activateIn(alice(), ALICE, HASH_A, 'inst-alice1', Date.now() - 60 * DAY)).rejects.toThrow();
+  });
+
+  // The update branch has capped the user document's expiry against the key from the start.
+  // The create branch only asked that it fall after activatedAt, so the very first
+  // activation on a fresh account was the one write a modified client could use to state any
+  // term it liked — and the ceiling would then apply only to later updates, never undoing it.
+  it('refuses a first activation that grants itself more than the key', async () => {
+    const db = alice();
+    await expect(
+      runTransaction(db, async (tx: Transaction) => {
+        const now = Date.now();
+        // Both documents have to be read before they are written, or the client rejects the
+        // transaction on its own rules and the test passes without the rules ever speaking.
+        await tx.get(doc(db, 'subscriptionKeys', HASH_A));
+        await tx.get(doc(db, 'users', ALICE));
+        // The key is written honestly, so this is not the crude forgery the test above
+        // refuses — only the user document is a lie.
+        tx.set(
+          doc(db, 'subscriptionKeys', HASH_A),
+          {
+            status: 'ACTIVE',
+            uid: ALICE,
+            installationId: 'inst-alice1',
+            activatedAt: now,
+            expiresAt: now + 30 * DAY,
+          },
+          { merge: true },
+        );
+        tx.set(
+          doc(db, 'users', ALICE),
+          activationFields(ALICE, HASH_A, 'inst-alice1', now, 3650 * DAY),
+        );
+      }),
+    ).rejects.toThrow();
+  });
+
+  // Rounding a sub-day term up to its whole-day ceiling is what the client did before
+  // durationMs existed, and it is still the shape a stale build produces. The cap has to
+  // refuse it on the user document too, not merely on the key.
+  it('refuses a 90-minute key whose user document rounds up to a full day', async () => {
+    const minutes = 90 * 60 * 1000;
+    await seed('subscriptionKeys', HASH_A, keyDoc({ durationDays: 1, durationMs: minutes }));
+    const db = alice();
+    await expect(
+      runTransaction(db, async (tx: Transaction) => {
+        const now = Date.now();
+        await tx.get(doc(db, 'subscriptionKeys', HASH_A));
+        await tx.get(doc(db, 'users', ALICE));
+        tx.set(
+          doc(db, 'subscriptionKeys', HASH_A),
+          {
+            status: 'ACTIVE',
+            uid: ALICE,
+            installationId: 'inst-alice1',
+            activatedAt: now,
+            expiresAt: now + minutes,
+          },
+          { merge: true },
+        );
+        tx.set(doc(db, 'users', ALICE), activationFields(ALICE, HASH_A, 'inst-alice1', now, DAY));
+      }),
+    ).rejects.toThrow();
   });
 
   it('refuses a user document created under somebody else’s email', async () => {

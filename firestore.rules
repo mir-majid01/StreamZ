@@ -115,6 +115,15 @@ service cloud.firestore {
         && request.resource.data.expiresAt > request.resource.data.activatedAt
         && request.resource.data.activatedAt >= request.resource.data.createdAt - 300000
         && boundToMe(request.resource.data.subscriptionId)
+        // The same cap the update branch applies, and it has to be here too. Without it
+        // the first activation of a fresh account was the one write that could state any
+        // expiry it liked, because the ceiling only existed for later updates. The honest
+        // client writes the identical `activatedAt + durationMs` to both documents (see
+        // activate() in src/firebase/subscriptions/api.ts), so this only refuses the
+        // modified one — but validate() takes the lesser of the two expiries today, and a
+        // rule cannot be secured by a client remembering to double-check it.
+        && request.resource.data.expiresAt
+             <= keyDocAfter(request.resource.data.subscriptionId).expiresAt
         && request.resource.data.keys().hasAll([
           'uid', 'email', 'status', 'subscriptionId', 'installationId', 'activatedAt',
           'expiresAt', 'lastLoginAt', 'lastActiveAt', 'appVersion', 'installationRotations',

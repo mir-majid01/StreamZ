@@ -81,6 +81,8 @@ Everything below was implemented after that build, on this branch, in five commi
 
 This repository has **no lint script**; typecheck plus the two Jest configs above are the whole gate, and CI runs exactly those.
 
+Re-run for section 6 (commit `1bcd207` plus the rules clause): `npx jest` — 16 suites, **293 passed**; rules emulator — **65 passed**; `npx tsc --noEmit` — **0 errors** in `src|modules|__tests__|components|scripts`, the `TS2322` above having been fixed in `1bcd207`, which also added the `Typecheck the app` step this table's own caveat exposed as missing.
+
 ### CI run 35 — the APK carrying all five fixes
 
 **Run 35, commit `bfc711e`, completed `success`** (https://github.com/mir-majid01/StreamZ/actions/runs/38719940884). Dispatched manually; `android-ci.yml` only auto-runs on `feat/streamz-phase-1a` and `v2.x.x`, so pushing this branch builds nothing by itself.
@@ -157,12 +159,29 @@ What was actually broken is the reporting. `fetchSubtitleText` had **no timeout 
 
 **BLOCKED:** audible output after selecting a track, and whether the tested streams carry a second audio track at all, are unverified. **No claim is made that a Hindi audio track exists for any title.** For the subtitle source checked, TMDB 550 carries no Hindi, Urdu or Arabic label among its 43 tracks — availability is per title, and this app will not promise a language a stream does not carry.
 
+### 6. Rules: the self-granted-expiry hole (repo only — **not deployed**)
+
+The rules notes recorded a hole left open by the sub-day key work. Verified against the file rather than taken on trust, and it was exactly as described, with one important correction about what it was worth.
+
+`users/{uid}` has two write paths. `update` capped the claimed expiry against the key (`expiresAt <= keyDocAfter(subscriptionId).expiresAt`). `create` asked only `expiresAt > activatedAt` — no cap, and no tie to `request.time` either, since `createdAt` was never compared against the server clock. So the **first** activation on a fresh account was the one entitlement write a modified client could state any term it liked on, and the later cap would never undo it.
+
+**What it was actually worth, measured rather than assumed:** less than it looks, and that is not a reason to leave it. `validate()` returns `Math.min(userExpiry, keyExpiry)`, and the key document is the one write the rules already police to the second (`expiresAt == activatedAt + keyDurationMs`, `activatedAt` pinned within five minutes of `request.time`). So an inflated user document changed nothing on the main path. The exception is `api.ts:161-168`, which trusts `userExpiry` alone when the key document is missing — reachable only after a privileged delete, since `subscriptionKeys` has `allow delete: if false`. A rule cannot be secured by a client remembering to double-check it, and the admin app is a second client of this same document.
+
+- `firestore.rules:121-129` — the create branch now carries the same cap as the update branch. Placed after `boundToMe` so the `getAfter` it reads is known to resolve.
+- `__tests__/rules/firestore.rules.test.ts` — `activationFields` took a **day count** and multiplied by `DAY`, while `activate()` writes `activatedAt + durationMs`. The helper's own comment claims it is "the exact shape of the client transaction"; for any sub-day key it was not, which is why nothing noticed the missing cap. It now takes the granted milliseconds, and `activateIn` passes `durationMs`.
+- Two new refusal tests (first activation granting 3650 days on a 30-day key; 90-minute key whose user row rounds up to a day) and one new positive assertion at the boundary — a 90-minute activation must be accepted when both documents say the same 90 minutes, so the cap is proven to refuse from above only.
+
+**Proven to catch the hole, not just to pass:** with the clause swapped for `&& true`, the suite reports `2 failed, 63 passed` — the two new refusal tests fail. Restored, it reports `65 passed`. Both new tests read each document before writing it; without those reads the client rejects the transaction on its own precondition and the test passes while proving nothing, which is how the first draft of them behaved.
+
+Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__tests__|components|scripts`; `npx jest` — 16 suites, 293 tests; rules emulator — 65 tests. **The deployed ruleset on `streamz-c98b9` predates this clause.** It needs the owner's approval to release.
+
 ## Still open after these fixes
 
 - Production update checks remain **disabled**: `FEATURES.updateChecker` is `false` in `src/config/features.ts`. No release was published and this branch was not merged.
 - **Deployed after the device test, on the owner's instruction:** `firestore.rules` was released to `streamz-c98b9` (`firestore: released rules firestore.rules to cloud.firestore`). Until that moment the short-key fix existed only in the repository, and activation of a four-minute key was still refused on device — the deployed ruleset predated `12972ca` and demanded `activatedAt + durationDays * 86400000`. Proven locally by running the pre-`12972ca` file against the client's exact write: four-minute grant refused, same key granted as a day accepted, thirty-day accepted. A rollback candidate is saved at `firestore.rollback-candidate.rules` outside the repo, with the caveat that it is a proven lower bound of what was live, not a capture of it — this CLI version has no rules-download command.
 - `party-server/web/*` and `skills-lock.json` are modified in the working tree by something outside this session (mtimes predate the edits here). They were left untouched and are in no commit.
-- The self-granted-expiry hole recorded in the rules notes, and the device-only checks in tasks #22-#24, #28, #29.
+- **The self-granted-expiry hole is closed in the repository and still open in production** — the clause is not deployed, because a rules change needs the owner's approval. Until it is, the analysis in section 6 is what is live.
+- The device-only checks in tasks #22-#24, #28, #29.
 
 ## Required output from Qoder
 
