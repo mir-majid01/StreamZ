@@ -98,7 +98,7 @@ Artifacts: `streamz-release-35` (43,596,494 bytes) and `streamz-release-35-sha25
 
 Both jobs ran every step green, including "Digest the APK this run built" and "Verify the digest file this run produced". **No release was published and no Firestore rules were deployed** — CI only builds and digests; the updater remains off.
 
-**Gap this surfaced, and it is not cosmetic:** the job is named "Tests and typecheck" but typechecks only `functions/` (`.github/workflows/android-ci.yml:173`). There is no app-wide `npx tsc --noEmit` anywhere in CI, and the Expo build strips types without checking them — so the pre-existing `useWatchNextRecommendation.ts(66,15) TS2322` passes CI today. Adding the step would fail the build until that error is fixed, which is why it is reported rather than quietly bolted on.
+**Gap this surfaced, and it is not cosmetic:** the job is named "Tests and typecheck" but typechecks only `functions/` (`.github/workflows/android-ci.yml:173`). There is no app-wide `npx tsc --noEmit` anywhere in CI, and the Expo build strips types without checking them — so the pre-existing `useWatchNextRecommendation.ts(66,15) TS2322` passes CI today. Adding the step would fail the build until that error is fixed, so it was reported first. **Now closed:** the error was real, not cosmetic — a single ternary over the union of the two TMDB response shapes let a `name`-shaped TV row be stamped `media_type: 'movie'`. Stamping inside each branch fixes it, `npx tsc --noEmit` is clean across `src`, `components`, `modules`, `scripts` and `__tests__`, and the step now runs in CI.
 
 ### 1. Home — `41f104e`
 

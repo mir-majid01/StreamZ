@@ -162,6 +162,12 @@ jobs:
       - name: Install JS dependencies
         run: npm ci
 
+      # The job has been named "Tests and typecheck" while only typechecking
+      # functions/. Metro strips types without checking them, so an app-wide type
+      # error could reach an APK unnoticed. This is the check the name promised.
+      - name: Typecheck the app
+        run: npx tsc --noEmit
+
       - name: Unit tests
         run: npx jest --ci --maxWorkers=2
 

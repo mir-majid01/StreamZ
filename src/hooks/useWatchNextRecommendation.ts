@@ -56,18 +56,28 @@ export const useWatchNextRecommendation = (
     setRecommendation(null);
 
     const movie = isMovie(item);
-    const request = movie
-      ? TMDBService.getSimilarMovies(item.id)
-      : TMDBService.getSimilarTVShows(item.id);
+    // Stamped inside each branch rather than in one map over both responses: the two
+    // endpoints resolve to different row shapes, and a single ternary across their
+    // union let a `name`-shaped TV row be labelled a movie.
+    const request: Promise<MediaItem[]> = movie
+      ? TMDBService.getSimilarMovies(item.id).then(
+          (res) =>
+            (res.results ?? []).map((row) => ({
+              ...row,
+              media_type: 'movie' as const,
+            })),
+        )
+      : TMDBService.getSimilarTVShows(item.id).then(
+          (res) =>
+            (res.results ?? []).map((row) => ({
+              ...row,
+              media_type: 'tv' as const,
+            })),
+        );
 
     request
-      .then((res) => {
+      .then((stamped) => {
         if (cancelled) return;
-        const stamped: MediaItem[] = (res.results ?? []).map((row) =>
-          movie
-            ? { ...row, media_type: 'movie' as const }
-            : { ...row, media_type: 'tv' as const },
-        );
         const pick =
           stamped.find(
             (candidate) =>
