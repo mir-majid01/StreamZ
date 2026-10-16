@@ -159,7 +159,7 @@ What was actually broken is the reporting. `fetchSubtitleText` had **no timeout 
 
 **BLOCKED:** audible output after selecting a track, and whether the tested streams carry a second audio track at all, are unverified. **No claim is made that a Hindi audio track exists for any title.** For the subtitle source checked, TMDB 550 carries no Hindi, Urdu or Arabic label among its 43 tracks — availability is per title, and this app will not promise a language a stream does not carry.
 
-### 6. Rules: the self-granted-expiry hole (repo only — **not deployed**)
+### 6. Rules: the self-granted-expiry hole (released to production 2026-10-16)
 
 The rules notes recorded a hole left open by the sub-day key work. Verified against the file rather than taken on trust, and it was exactly as described, with one important correction about what it was worth.
 
@@ -173,7 +173,23 @@ The rules notes recorded a hole left open by the sub-day key work. Verified agai
 
 **Proven to catch the hole, not just to pass:** with the clause swapped for `&& true`, the suite reports `2 failed, 63 passed` — the two new refusal tests fail. Restored, it reports `65 passed`. Both new tests read each document before writing it; without those reads the client rejects the transaction on its own precondition and the test passes while proving nothing, which is how the first draft of them behaved.
 
-Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__tests__|components|scripts`; `npx jest` — 16 suites, 293 tests; rules emulator — 65 tests. **The deployed ruleset on `streamz-c98b9` predates this clause.** It needs the owner's approval to release.
+Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__tests__|components|scripts`; `npx jest` — 16 suites, 293 tests; rules emulator — 65 tests.
+
+**Deployed on the owner's instruction (2026-10-16), after run 38 was green.** `npx firebase-tools deploy --only firestore:rules --project streamz-c98b9` → `cloud.firestore: rules file firestore.rules compiled successfully`, `firestore: released rules firestore.rules to cloud.firestore`, `Deploy complete!`, exit 0. A `--dry-run` against the same project was checked first.
+
+| Item | Value |
+| --- | --- |
+| Released file | `firestore.rules`, SHA-256 `6ebdbe8714774c6d38e964d6982dd229618c1933c94cf9f7a0a86c79147a1ac2` |
+| Equivalence | `git diff 6dfb550 -- firestore.rules` empty — the released bytes are exactly the file the 65-test emulator suite validated, locally and in run 38 |
+| Rollback | `C:\Users\HP\firestore.rollback-pre-expiry-cap.rules`, SHA-256 `0ffa296cb0e43f6b871236685eee8eb4fcc9cb8d42d0f8dc7ec83561318a20dc` |
+| Rollback fidelity | 21,175 bytes, exported by `git show 1bcd207:firestore.rules`, which `git diff fd55b8e 1bcd207 -- firestore.rules` proves identical to the previously released version — so this is an **exact** capture of what was live, not the lower-bound approximation the earlier rollback file was |
+| Clause count check | pre-cap file contains the cap once (update branch); released file contains it twice (create + update) |
+
+**Read back from Google's API, independently of the CLI's own message.** `GET https://firebaserules.googleapis.com/v1/projects/streamz-c98b9/releases` returns release `cloud.firestore` → ruleset `a595be5e-3df9-4bd1-9f55-dd75018e4bd3`, and that ruleset's `createTime` is `2026-10-16T09:18:15.764399Z` — the second this deploy ran. The list also shows the previous release's ruleset, `580a5d53-…` at `2026-10-15T15:30:34Z`, which is the earlier short-key deploy, then `867e0ada-…` (2026-10-12) and `d5e53e19-…` (2026-10-11). So the release pointer moving onto a ruleset created by this deploy is confirmed server-side, not just by `Deploy complete!`.
+
+**What could not be read back, and why it is not a gap in this deploy.** `rulesets.get` does return `source.files[0]`, but the `content` field is a 9-byte stub — and the *same* 9 bytes with the *same* sha256 for the ruleset deployed today and the one deployed the day before. Rule text is not retrievable through this API at all, so no text-level comparison against production is possible from any client. The chain supporting "production now enforces the cap" is therefore: the CLI uploaded `firestore.rules` from a working tree proven byte-identical to `6dfb550`, that file's own SHA-256 is `6ebdbe87…`, and it is the exact content the 65-test emulator suite validated both locally and in CI run 38.
+
+**What this does not prove.** No activation has been attempted against production since the release, and the emulator is the same rules language but not the same service. The argument that this cannot refuse a legitimate activation is read from code, not measured: `activate()` writes one `expiresAt` value to both documents, so the new `<=` is equality on every real path, and the boundary case is asserted in the suite. A legacy 30-day key on an old build behaves the same way. A device activation on run 38's APK is still what would settle it.
 
 ### 7. CI run 36 failed, and the reason was the check I added
 
@@ -227,7 +243,7 @@ This is the first build that carries the `useWatchNextRecommendation` fix, and t
 - **CI is green on `a2a0bbf` (run 38).** Run 36 failed the new typecheck step (section 7), run 37 passed verification and failed only in Gradle dependency resolution, and run 38 passed every step of both jobs — so the app's own typecheck now gates CI, which it did not before this branch. Newest APK: run 38, digest `db192d934eb1b2ebd766760e83771568d61647a4680529cdd06f7ded748d3150`.
 - **`party-server/web` does not typecheck** — 234 errors of its own (missing `react-router-dom` / `lucide-react` types under Expo resolution, plus real type errors). It is now outside the app's gate and still inside its own (`tsc -p tsconfig.app.json` in its build script). Untouched here, and outside the five reported areas.
 - `useWatchNextRecommendation` has **no runtime test**. Its defect surfaced as a type error, so the step added in `1bcd207` is the guard; the pick order (prefer a poster, skip the current id, skip coming-soon) is untested, and covering it needs `@testing-library/react-native` added as a devDependency — an owner decision, since it is not currently declared.
-- **The self-granted-expiry hole is closed in the repository and still open in production** — the clause is not deployed, because a rules change needs the owner's approval. Until it is, the analysis in section 6 is what is live.
+- **The self-granted-expiry cap is now live** (`6dfb550`'s ruleset released 2026-10-16, section 6). What remains unproven is not the release but the effect: no activation has been run against production since, and rule text cannot be read back from the API to compare. A device activation on run 38's APK settles it.
 - The device-only checks in tasks #22-#24, #28, #29.
 
 ## Required output from Qoder
