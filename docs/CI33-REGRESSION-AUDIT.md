@@ -197,12 +197,25 @@ Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__test
 
 **No claim is made that `party-server/web` typechecks.** It did not before this change and still does not; its 234 errors are untouched and are its own gate's problem, in a project outside the five reported areas. Nothing there was edited — the working tree already carried changes to it from outside this session, and those remain uncommitted and excluded from every commit here.
 
+### 8. CI run 37 — the verification job is green, the build job failed elsewhere
+
+**Run 37** (commit `a2a0bbf`, https://github.com/mir-majid01/StreamZ/actions/runs/38869928884) split:
+
+| Job | Result | What it proves |
+| --- | --- | --- |
+| Tests and typecheck | **success** | `Typecheck the app`, `Unit tests`, `Firestore security rules tests` and `Typecheck Cloud Functions` all passed on CI for the first time. Section 7's fix is confirmed, and the rules clause in `6dfb550` passes its own suite against the real emulator in CI, not just locally. |
+| Build APK | **failure** | `Assemble release APK` died in Gradle before compiling anything: `Error resolving plugin [id: 'com.facebook.react.settings']` at `android/settings.gradle:21`, caused by `Could not resolve all artifacts for configuration 'classpath'` — `kotlin-stdlib:2.2.21`, `kotlin-gradle-plugin:2.1.20`, `java-diff-utils:4.15`, with `Could not parse POM https://plugins.gradle.org/m2/...`. |
+
+**Assessment of the build failure, with the evidence that supports it.** This is dependency *resolution* against three public repositories, one of them reporting a POM it could not parse — a truncated fetch, not a missing artifact; `kotlin-stdlib:2.2.21` and `java-diff-utils:4.15` both exist upstream. `git diff 1bcd207 a2a0bbf -- android/` is empty, so the Android inputs are byte-identical to run 36, whose `Build APK` succeeded, and neither commit in between touches Gradle, Kotlin versions, or `android/`. Run 35 built the same tree twice as well. **A retry was dispatched (run 38); its outcome is not recorded here because it had not finished when this was written.** If a retry fails at the same coordinates, this assessment is wrong and it is a real pinning/repository problem.
+
+**No APK exists for `a2a0bbf`.** Run 35's artifact is still the newest build, and it predates one user-visible change: the `useWatchNextRecommendation` fix, where a single ternary over the union of the two similar-response shapes could stamp a TV row with `media_type: 'movie'` — which is what the detail route and the poster URL are chosen from. Everything else in this audit is either server-side (rules, not deployed) or CI-only.
+
 ## Still open after these fixes
 
 - Production update checks remain **disabled**: `FEATURES.updateChecker` is `false` in `src/config/features.ts`. No release was published and this branch was not merged.
 - **Deployed after the device test, on the owner's instruction:** `firestore.rules` was released to `streamz-c98b9` (`firestore: released rules firestore.rules to cloud.firestore`). Until that moment the short-key fix existed only in the repository, and activation of a four-minute key was still refused on device — the deployed ruleset predated `12972ca` and demanded `activatedAt + durationDays * 86400000`. Proven locally by running the pre-`12972ca` file against the client's exact write: four-minute grant refused, same key granted as a day accepted, thirty-day accepted. A rollback candidate is saved at `firestore.rollback-candidate.rules` outside the repo, with the caveat that it is a proven lower bound of what was live, not a capture of it — this CLI version has no rules-download command.
 - `party-server/web/*` and `skills-lock.json` are modified in the working tree by something outside this session (mtimes predate the edits here). They were left untouched and are in no commit.
-- **CI run 36 is red** for the reason in section 7. Its `Build APK` job succeeded, so the artifact exists, but no test or rules step ran in that verification job — it is not evidence of anything about `6dfb550`, and the next dispatch is the first run that tests both the added typecheck and the rules clause.
+- **CI run 36 is red** for the reason in section 7; run 37's verification job is green and its build job failed in dependency resolution (section 8). The newest usable APK is still run 35's.
 - **The self-granted-expiry hole is closed in the repository and still open in production** — the clause is not deployed, because a rules change needs the owner's approval. Until it is, the analysis in section 6 is what is live.
 - The device-only checks in tasks #22-#24, #28, #29.
 
