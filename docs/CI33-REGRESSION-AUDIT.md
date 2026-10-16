@@ -208,14 +208,25 @@ Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__test
 
 **Assessment of the build failure, with the evidence that supports it.** This is dependency *resolution* against three public repositories, one of them reporting a POM it could not parse — a truncated fetch, not a missing artifact; `kotlin-stdlib:2.2.21` and `java-diff-utils:4.15` both exist upstream. `git diff 1bcd207 a2a0bbf -- android/` is empty, so the Android inputs are byte-identical to run 36, whose `Build APK` succeeded, and neither commit in between touches Gradle, Kotlin versions, or `android/`. Run 35 built the same tree twice as well. **A retry was dispatched (run 38); its outcome is not recorded here because it had not finished when this was written.** If a retry fails at the same coordinates, this assessment is wrong and it is a real pinning/repository problem.
 
-**No APK exists for `a2a0bbf`.** Run 35's artifact is still the newest build, and it predates one user-visible change: the `useWatchNextRecommendation` fix, where a single ternary over the union of the two similar-response shapes could stamp a TV row with `media_type: 'movie'` — which is what the detail route and the poster URL are chosen from. Everything else in this audit is either server-side (rules, not deployed) or CI-only.
+**No APK existed for `a2a0bbf` when run 37 finished.** Run 35's was then the newest build, and it predated one user-visible change: the `useWatchNextRecommendation` fix, where a single ternary over the union of the two similar-response shapes could stamp a TV row with `media_type: 'movie'` — which is what the detail route and the poster URL are chosen from. Run 38, recorded above, supersedes that state.
+
+**Resolved by run 38, on the same commit.** **Run 38** (`a2a0bbf`, https://github.com/mir-majid01/StreamZ/actions/runs/38871937353) completed **success** — every step of both jobs, including `Typecheck the app`, `Unit tests`, `Firestore security rules tests` and `Typecheck Cloud Functions`, then `Assemble release APK`, `Digest the APK this run built` and `Verify the digest file this run produced`. Because run 37 and run 38 built the identical tree and only the second one resolved its dependencies, the transient-fetch reading is now supported by evidence rather than argument, and the kotlin/java-diff-utils coordinates need no code change.
+
+| Run 38 artifact | Value |
+| --- | --- |
+| `streamz-release-38` | 43,596,487 bytes |
+| `streamz-release-38-sha256` | `db192d934eb1b2ebd766760e83771568d61647a4680529cdd06f7ded748d3150  app-release.apk` |
+
+This is the first build that carries the `useWatchNextRecommendation` fix, and the first whose verification job actually typechecked the app. **The rules clause in `6dfb550` is not in this APK** — rules live server-side and are still undeployed.
 
 ## Still open after these fixes
 
 - Production update checks remain **disabled**: `FEATURES.updateChecker` is `false` in `src/config/features.ts`. No release was published and this branch was not merged.
 - **Deployed after the device test, on the owner's instruction:** `firestore.rules` was released to `streamz-c98b9` (`firestore: released rules firestore.rules to cloud.firestore`). Until that moment the short-key fix existed only in the repository, and activation of a four-minute key was still refused on device — the deployed ruleset predated `12972ca` and demanded `activatedAt + durationDays * 86400000`. Proven locally by running the pre-`12972ca` file against the client's exact write: four-minute grant refused, same key granted as a day accepted, thirty-day accepted. A rollback candidate is saved at `firestore.rollback-candidate.rules` outside the repo, with the caveat that it is a proven lower bound of what was live, not a capture of it — this CLI version has no rules-download command.
 - `party-server/web/*` and `skills-lock.json` are modified in the working tree by something outside this session (mtimes predate the edits here). They were left untouched and are in no commit.
-- **CI run 36 is red** for the reason in section 7; run 37's verification job is green and its build job failed in dependency resolution (section 8). The newest usable APK is still run 35's.
+- **CI is green on `a2a0bbf` (run 38).** Run 36 failed the new typecheck step (section 7), run 37 passed verification and failed only in Gradle dependency resolution, and run 38 passed every step of both jobs — so the app's own typecheck now gates CI, which it did not before this branch. Newest APK: run 38, digest `db192d934eb1b2ebd766760e83771568d61647a4680529cdd06f7ded748d3150`.
+- **`party-server/web` does not typecheck** — 234 errors of its own (missing `react-router-dom` / `lucide-react` types under Expo resolution, plus real type errors). It is now outside the app's gate and still inside its own (`tsc -p tsconfig.app.json` in its build script). Untouched here, and outside the five reported areas.
+- `useWatchNextRecommendation` has **no runtime test**. Its defect surfaced as a type error, so the step added in `1bcd207` is the guard; the pick order (prefer a poster, skip the current id, skip coming-soon) is untested, and covering it needs `@testing-library/react-native` added as a devDependency — an owner decision, since it is not currently declared.
 - **The self-granted-expiry hole is closed in the repository and still open in production** — the clause is not deployed, because a rules change needs the owner's approval. Until it is, the analysis in section 6 is what is live.
 - The device-only checks in tasks #22-#24, #28, #29.
 
