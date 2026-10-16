@@ -233,7 +233,73 @@ Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__test
 | `streamz-release-38` | 43,596,487 bytes |
 | `streamz-release-38-sha256` | `db192d934eb1b2ebd766760e83771568d61647a4680529cdd06f7ded748d3150  app-release.apk` |
 
-This is the first build that carries the `useWatchNextRecommendation` fix, and the first whose verification job actually typechecked the app. **The rules clause in `6dfb550` is not in this APK** — rules live server-side and are still undeployed.
+This is the first build that carries the `useWatchNextRecommendation` fix, and the first whose verification job actually typechecked the app. **The rules clause in `6dfb550` is not in this APK** — rules live server-side, and were released after this build (section 6), so an APK from run 38 runs against them without containing them.
+
+### 9. Item 1 re-measured: what Home's failure actually is
+
+The first reading of this was "ISP DNS poisoning", drawn from one comparison. That was overstated, so the host was tested layer by layer instead — resolution, then TCP, then TLS, then HTTP — from this machine on the same Wi-Fi the phone uses, on 2026-10-16. The resolver block, verbatim from the probe:
+
+```
+api.themoviedb.org
+   getaddrinfo (app path) : 2405:200:1607:2820:41::36, 49.44.79.236
+   UDP  to DHCP DNS       : 49.44.79.236
+   UDP  to 1.1.1.1        : 13.224.245.63, 13.224.245.92, 13.224.245.44, 13.224.245.47
+   DoH  1.1.1.1           : 3.175.86.103, 3.175.86.37, 3.175.86.50, 3.175.86.67
+   DoH  8.8.8.8           : unparseable
+```
+
+| Layer | Measured |
+| --- | --- |
+| This network's own answer for `api.themoviedb.org` | `49.44.79.236` / `2405:200:1607:2820:41::36` — an Airtel India address, not TMDB's |
+| Public resolvers for the same name | CloudFront ranges: `13.224.245.x` over UDP to 1.1.1.1, `3.175.86.x` via Cloudflare DoH. Google's DoH endpoint returned something the parser could not read. |
+| TCP 443 to the network's answer | times out |
+| TLS + HTTP to the CloudFront answer, with SNI `api.themoviedb.org` (`curl --resolve`) | **HTTP 401 with TMDB's own body** (`Invalid API key…`) — so TLS, the host, and the API are all healthy when reached at a correct address |
+| `image.tmdb.org` | `84.17.38.232` from **both** the network resolver and 1.1.1.1; CNAME `tmdb-image-prod.b-cdn.net` (BunnyCDN); **HTTP 404 from origin** on a bare path. Not substituted. An earlier `http=000` timeout on this host was IPv6-first connection attempts, not a block. |
+| Contrast on the same Wi-Fi | `www.google.com` → 200; `firestore.googleapis.com` → works. Not a general outage. |
+| Missing/invalid key | ruled out by layer: a key problem is answered by HTTP 401 from the service (reproduced above) and by `missingKeyError` in the client, and Home's failure was a connection that never completed. |
+
+**What this proves, and what it does not.** Proven: on this network path, on this date, the name is answered differently than every public resolver answers it, and the address that is handed out refuses port 443. Not proven, and deliberately not claimed: *who* is doing it. It could be the ISP's filtering, the router's own resolver, a CGNAT middlebox, or the IPv6 resolver `2405:201:…` the host was configured with; nothing probed `49.44.79.236` beyond the failed 443 and a 100 %-loss ICMP; the phone's cellular path was never tested. The wording in the app therefore says the host **can be blocked by your network's DNS** and names `api.themoviedb.org`, rather than accusing an ISP (`fe94e9f`), and it stopped saying "check your connection", which sent people to debug a radio that was fine.
+
+**Resilience, which was already in place and is now covered by tests.** `fetchHomeWave1` awaits the two sections through `loadSection`, each of which catches its own failure and returns `{ items, failure }` ([homeFeedFetch.ts:75-93](file:///C:/Users/HP/Desktop/StreamZ/src/services/homeFeedFetch.ts#L75)); a dead movies endpoint therefore cannot discard fetched TV rows. `wave1IsBlocked` is only true when *both* sections produced nothing, so the blocked screen cannot appear over a populated feed, and `useHomeData` renders the surviving rows plus a `notice` naming the failed layer, with `canRetry` held back when the reason cannot retry itself (no key in the build). `__tests__/home-resilience.test.ts` asserts the one-dead-section case, the per-layer messages, and that no message ever quotes the request URL or the key.
+
+### 10. Item 2: the three Live TV catalogues, measured
+
+Parsed from the three configured playlists, and sampled over HTTPS:
+
+| Source | Entries | `.m3u8` | no extension | `.mpd` | `.m3u` | `.ts` | other progressive |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `ph.m3u` (legacy) | 20 | 20 | 0 | 0 | 0 | 0 | 0 |
+| iptv-org `index.m3u` | 11,346 | 10,943 (96.45 %) | 274 | 123 | 1 | 4 | 1 |
+| Free-TV `playlist.m3u8` | 2,023 | 1,743 (86.16 %) | 250 | 25 | 4 | 0 | 1 |
+| **Total** | **13,389** | **12,706** | **524** | **148** | **5** | **4** | **2** |
+
+Reachability of sampled stream URLs — 80 requested (15 / 45 / 20), **53 answered 2xx (66.25 %)**, 27 did not:
+
+| Outcome | Count | Note |
+| --- | --- | --- |
+| 200 | 53 | Of these, exactly **one** extensionless sample came back with an HLS content type; no `.m3u8` sample reported one, because these hosts serve playlists as `text/plain` or similar — the extension, not the content type, is what the app keys on. |
+| timeout | 8 | Host accepted the connection or did not answer in 20 s. |
+| 403 | 4 | Publisher refusing a client without its expected headers. |
+| 404 | 4 | Channel gone; the catalogue still lists it. |
+| ECONNREFUSED | 4 | Host up, port closed. |
+| ENOTFOUND | 2 | Host name no longer resolves. |
+| 502 | 1 | Upstream of the publisher. |
+| TLS unverifiable | 1 | `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — incomplete chain at the publisher. |
+| Required a User-Agent | 1 of 41 sampled iptv-org HLS URLs | The parser already carries `http-user-agent` / `http-referrer` from `#EXTINF` into `stream.headers`, and the player passes them through. |
+
+**What this says about "some channels don't play".** Two thirds of a random sample was reachable from a machine; a third was not, and every failure category above is on the publisher's side of the line. No client change repairs a 404, a closed port, or an expired certificate, and the app does not claim otherwise. Redirect behaviour and per-player error codes were **not** captured, because the error payload was being thrown away — see below.
+
+### 11. Item 2, the two defects that were fixable in code
+
+**a) Every non-`.mpd` URL was declared HLS to the player.** `LivePlayerScreen` built `type: /\.mpd(\?|$)/i.test(url) ? 'mpd' : 'm3u8'`, and react-native-video maps that hint to ExoPlayer's media source with no content sniffing (`Source.kt:235` → `Util.inferContentType()`; only `CONTENT_TYPE_HLS` becomes `HlsMediaSource`). The 6 progressive/raw-container entries above therefore could not be reached by inference and failed as malformed playlists. Now `liveSourceType()` reads only the URL *path* — `.mpd` → `mpd`, `.mp4/.mkv/.webm/.mov/.ts` → no hint at all, everything else → `m3u8` — which also stops a host or query string that happens to contain an extension from choosing the reader ([sourceType.ts](file:///C:/Users/HP/Desktop/StreamZ/src/services/liveTv/sourceType.ts)).
+
+Scoped honestly: this fixes **6 of 13,389** entries. The 148 `.mpd` entries were already typed correctly by the old test, and `.m3u` and extensionless were already answered as HLS. `__tests__/live-tv-source-type.test.ts` has 6 tests; run against the old one-line rule, exactly 1 fails — the progressive-container case — which is the true size of the change, not a claim of 6.
+
+**b) The player's error code was discarded.** `onError={() => setError('This channel failed to play…')}` threw away the payload, so a publisher outage, a host that refuses the app, and a container the device cannot read produced one indistinguishable sentence — which is why the reports that started this arrived as "a channel does not work". `livePlaybackDetail()` now keeps `errorString` + `errorCode` (Android: `ReactExoplayerView.java:1994`, `ExoPlaybackException: <NAME>` / `"2"+code`; iOS: `localizedDescription` / `code`) and shows them under the message in `FONT.mono`. It deliberately never reads `errorException`: that is a Java stack trace, and ExoPlayer's IO failures quote the failing URL in it, tokens included — `__tests__/live-tv-playback-error.test.ts` asserts the absence twice, and the second case is proven to fail if the stack trace is added to the fallback chain.
+
+**Left alone, on purpose:** the same mis-typing exists on the on-demand path — `kindOf()` in `FlixQuestService.ts:138-142` folds DASH into `'hls'`, and `PlayerScreen.tsx:531` turns that into `type: 'm3u8'`. Fixing it means changing a `kind` union that downloads (`DownloadService`) and watch-party (`party/protocol.ts`) both consume, for a case that has not been reached on a device. Recorded as a defect, not patched blind.
+
+**Device verification is blocked.** No Android device was attached when this was written (`adb devices` empty), so neither fix has been observed to change playback. The unit tests prove the branch logic; they do not prove a channel plays.
 
 ## Still open after these fixes
 
@@ -244,6 +310,10 @@ This is the first build that carries the `useWatchNextRecommendation` fix, and t
 - **`party-server/web` does not typecheck** — 234 errors of its own (missing `react-router-dom` / `lucide-react` types under Expo resolution, plus real type errors). It is now outside the app's gate and still inside its own (`tsc -p tsconfig.app.json` in its build script). Untouched here, and outside the five reported areas.
 - `useWatchNextRecommendation` has **no runtime test**. Its defect surfaced as a type error, so the step added in `1bcd207` is the guard; the pick order (prefer a poster, skip the current id, skip coming-soon) is untested, and covering it needs `@testing-library/react-native` added as a devDependency — an owner decision, since it is not currently declared.
 - **The self-granted-expiry cap is now live** (`6dfb550`'s ruleset released 2026-10-16, section 6). What remains unproven is not the release but the effect: no activation has been run against production since, and rule text cannot be read back from the API to compare. A device activation on run 38's APK settles it.
+- **Home is still empty on this network.** Sections are independent, classified, and retryable (section 9), but none of that fetches TMDB through a resolver that answers `api.themoviedb.org` with an Airtel address. The measured cause is upstream of the app; a VPN or a different DNS answer is the only thing that makes the feed appear, and nothing here proves which component gave the wrong answer.
+- **The on-demand path has the same mis-typing the live path just lost.** `kindOf()` (`src/services/FlixQuestService.ts:138-142`) folds DASH into `'hls'`, and `PlayerScreen.tsx:531` renders that as `type: 'm3u8'`, so a `.mpd` stream link is forced through the HLS parser there too. Not patched: `kind` is consumed by downloads and watch-party as well, and no DASH link has been reached on a device.
+- **Live TV playback after these two fixes is unverified.** No device was attached (`adb devices` empty), so `liveSourceType` and the new error line are proven by unit tests and by code reading only. Reachability of the catalogues themselves (section 10) is a publisher-side number no client change moves.
+- Subtitles and audio tracks (task #35) stay **blocked**: every on-demand path is unreachable while the API host resolves wrongly, and the device that would show a real track list is not attached.
 - The device-only checks in tasks #22-#24, #28, #29.
 
 ## Required output from Qoder
