@@ -125,11 +125,18 @@ describe('TMDB request classification', () => {
     expect(err.message).toContain('[api key]');
   });
 
-  it('never puts the request URL in an error message', async () => {
+  it('names the host it could not reach without ever leaking the credential', async () => {
     fetchMock.mockRejectedValue(new Error('Connection was reset'));
     const err = await TMDBService.getPopularMovies(1, 'US').catch((e) => e);
+    // The invariant is the key, not the hostname. The query string is what turns a leaked
+    // message into a stolen credential; the host is public, and it is the only clue that
+    // separates "your network's DNS is blocking this one site" — measured on a real device
+    // with Google's APIs working on the same Wi-Fi — from "your connection is off".
     expect(err.message).not.toContain('api_key');
-    expect(err.message).not.toContain('themoviedb.org');
+    expect(err.message).not.toContain('unit-test-tmdb-key');
+    expect(err.message).not.toMatch(/[?&]/);
+    expect(err.message).toContain('api.themoviedb.org');
+    expect(err.message).not.toMatch(/check your connection/i);
     expect(err.path).toBe('/movie/popular');
   });
 });

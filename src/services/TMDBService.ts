@@ -116,6 +116,15 @@ class TMDBServiceImpl {
   private readonly baseUrl = TMDB_CONFIG.BASE_URL;
   private readonly apiKey = TMDB_CONFIG.API_KEY;
 
+  /** Host only, never the query string — used so a failure can name what it could not reach. */
+  private get host(): string {
+    try {
+      return new URL(this.baseUrl).host;
+    } catch {
+      return 'the TMDB API';
+    }
+  }
+
   private async request<T>(path: string, params: QueryParams = {}): Promise<T> {
     let attempt = 0;
     for (;;) {
@@ -177,7 +186,12 @@ class TMDBServiceImpl {
         );
       }
       throw new TMDBError(
-        'Network request failed. Check your connection, then try again.',
+        // Naming the host is the whole point: measured on a real device, this branch fired
+        // while Google's APIs on the same Wi-Fi worked fine, because the network's DNS was
+        // answering api.themoviedb.org with somebody else's address. "Check your connection"
+        // sent the owner looking at the wrong thing. The host is public information; the
+        // query string carrying the key is what must never appear here.
+        `Could not reach ${this.host}. Other sites may work fine — this one can be blocked by your network's DNS. Try a VPN or another connection.`,
         'network',
         { path },
       );
