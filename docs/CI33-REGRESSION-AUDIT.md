@@ -81,7 +81,7 @@ Everything below was implemented after that build, on this branch, in five commi
 
 This repository has **no lint script**; typecheck plus the two Jest configs above are the whole gate, and CI runs exactly those.
 
-Re-run for section 6 (commit `1bcd207` plus the rules clause): `npx jest` — 16 suites, **293 passed**; rules emulator — **65 passed**; `npx tsc --noEmit` — **0 errors** in `src|modules|__tests__|components|scripts`, the `TS2322` above having been fixed in `1bcd207`, which also added the `Typecheck the app` step this table's own caveat exposed as missing.
+Re-run for section 6 (commit `1bcd207` plus the rules clause): `npx jest` — 16 suites, **293 passed**; rules emulator — **65 passed**; `npx tsc --noEmit` — reported here as "0 errors" **through a filter that was itself the flaw.** See section 7.
 
 ### CI run 35 — the APK carrying all five fixes
 
@@ -175,11 +175,34 @@ The rules notes recorded a hole left open by the sub-day key work. Verified agai
 
 Checks after this change: `npx tsc --noEmit` — 0 errors in `src|modules|__tests__|components|scripts`; `npx jest` — 16 suites, 293 tests; rules emulator — 65 tests. **The deployed ruleset on `streamz-c98b9` predates this clause.** It needs the owner's approval to release.
 
+### 7. CI run 36 failed, and the reason was the check I added
+
+**Run 36** (commit `1bcd207`, https://github.com/mir-majid01/StreamZ/actions/runs/38860805332) finished **failure**: step `Typecheck the app` failed with 234 `error TS` lines, and `Unit tests`, `Firestore security rules tests` and `Typecheck Cloud Functions` were all skipped behind it. `Build APK` succeeded, because it is a separate job — so run 36 does have an artifact, but it is **not** a run whose verification passed, and it should not be treated as one.
+
+**Root cause, read from the log rather than guessed.** Every one of the 234 errors was in `party-server/web/**`: mostly TS2307 (`Cannot find module 'react-router-dom'`, `'lucide-react'`, `'@/components/...'`), plus TS2322 and TS7006 that are not missing-dependency noise. `party-server/web` is a separate Vite project — its own `package.json`, lockfile, `tsconfig.json`, and its own typecheck gate (`tsc -p tsconfig.app.json --noEmit` in its build script). The **root** `tsconfig.json` declares no `include`/`exclude`, so TypeScript's default of "every TypeScript file under the project root" swept that nested app into the Expo program, under `customConditions: ["react-native"]` and Expo's module resolution. CI installs the app's dependencies and never the web app's, so its imports cannot resolve there.
+
+**The part worth recording about the process.** I added the step in `1bcd207` and reported it green, because locally I ran `npx tsc --noEmit` and grepped for `^(src|modules|__tests__|components|scripts)/`. That filter was chosen to describe the app's sources, and it worked — it also removed all 234 of these errors from view. The new step therefore failed in CI on the first run precisely because CI did not have my filter. Same class of mistake as the `expiryLabel` assertion earlier in this audit, in mirror image: then I asserted something false about the output; here I hid true output.
+
+**Fix at the root cause, not in the command.** `tsconfig.json` now declares `exclude`, naming both nested projects (`party-server`, `functions` — the latter already has its own CI step). Because `exclude` *replaces* rather than extends the list inherited from `expo/tsconfig.base`, the base's own entries (`node_modules`, `babel.config.js`, `metro.config.js`, `jest.config.js`, `android`, `ios`) are repeated so nothing silently widens back.
+
+**Proved to still be checking the app, not just to be quiet.** The verification that matters for a change like this is coverage, because an `exclude` that dropped everything would also report zero errors:
+
+| Check | Result |
+| --- | --- |
+| `npx tsc --noEmit` (bare, exactly what CI runs) | exit **0**, 0 error lines |
+| `npx tsc --noEmit --listFiles` | `src/` 386, `components/` 146, `modules/` 4, `__tests__/` 17, `scripts/` 2 files still in the program |
+| same | `functions/` 1 (`functions/src/keys.ts`, still pulled in through `__tests__/phase1a-keys.test.ts`'s import — `exclude` removes ambient inclusion, not imports) |
+| same | `party-server/` 0 — excluded as intended |
+| `npx jest` | 16 suites, 293 passed |
+
+**No claim is made that `party-server/web` typechecks.** It did not before this change and still does not; its 234 errors are untouched and are its own gate's problem, in a project outside the five reported areas. Nothing there was edited — the working tree already carried changes to it from outside this session, and those remain uncommitted and excluded from every commit here.
+
 ## Still open after these fixes
 
 - Production update checks remain **disabled**: `FEATURES.updateChecker` is `false` in `src/config/features.ts`. No release was published and this branch was not merged.
 - **Deployed after the device test, on the owner's instruction:** `firestore.rules` was released to `streamz-c98b9` (`firestore: released rules firestore.rules to cloud.firestore`). Until that moment the short-key fix existed only in the repository, and activation of a four-minute key was still refused on device — the deployed ruleset predated `12972ca` and demanded `activatedAt + durationDays * 86400000`. Proven locally by running the pre-`12972ca` file against the client's exact write: four-minute grant refused, same key granted as a day accepted, thirty-day accepted. A rollback candidate is saved at `firestore.rollback-candidate.rules` outside the repo, with the caveat that it is a proven lower bound of what was live, not a capture of it — this CLI version has no rules-download command.
 - `party-server/web/*` and `skills-lock.json` are modified in the working tree by something outside this session (mtimes predate the edits here). They were left untouched and are in no commit.
+- **CI run 36 is red** for the reason in section 7. Its `Build APK` job succeeded, so the artifact exists, but no test or rules step ran in that verification job — it is not evidence of anything about `6dfb550`, and the next dispatch is the first run that tests both the added typecheck and the rules clause.
 - **The self-granted-expiry hole is closed in the repository and still open in production** — the clause is not deployed, because a rules change needs the owner's approval. Until it is, the analysis in section 6 is what is live.
 - The device-only checks in tasks #22-#24, #28, #29.
 

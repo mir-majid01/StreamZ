@@ -17,5 +17,22 @@
       "react",
       "react-test-renderer"
     ]
-  }
+  },
+  // One program compiles one project. party-server/web is a separate Vite app with its own
+  // package.json, its own tsconfig, and its own gate (`tsc -p tsconfig.app.json --noEmit` in
+  // its build script); functions/ likewise, and CI typechecks it as its own step. Left to the
+  // default include — every TypeScript file under the repository root — the Expo program swept
+  // both in and reported 234 errors from code this app does not import, which is what failed
+  // the `Typecheck the app` step. `exclude` replaces the list inherited from
+  // expo/tsconfig.base instead of adding to it, so those entries are repeated here.
+  "exclude": [
+    "./node_modules",
+    "./babel.config.js",
+    "./metro.config.js",
+    "./jest.config.js",
+    "./android",
+    "./ios",
+    "./party-server",
+    "./functions"
+  ]
 }
