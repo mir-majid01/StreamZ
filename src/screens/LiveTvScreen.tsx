@@ -1,29 +1,68 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type Ref } from 'react';
-import { FlatList, RefreshControl, ScrollView } from 'react-native';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentRef,
+  type Ref,
+} from 'react';
+import { FlatList, RefreshControl, useWindowDimensions } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Radio, Search as SearchIcon, Star } from 'lucide-react-native';
+import {
+  Calendar,
+  CloudOff,
+  History,
+  Radio,
+  Search as SearchIcon,
+  SearchX,
+  Star,
+  X,
+} from 'lucide-react-native';
+import type { LucideIcon } from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
-import { Center } from '@/components/ui/center';
 import { HStack } from '@/components/ui/hstack';
 import { VStack } from '@/components/ui/vstack';
-import { Heading } from '@/components/ui/heading';
-import { Text } from '@/components/ui/text';
-import { Spinner } from '@/components/ui/spinner';
 import { Input, InputField, InputSlot, InputIcon } from '@/components/ui/input';
-import { Button, ButtonText } from '@/components/ui/button';
 import { Icon } from '@/components/ui/icon';
-import { Focusable } from '@/src/components/Focusable';
+import { StreamZErrorState } from '@/src/components/streamz/StreamZStateViews';
+import { StreamZText } from '@/src/components/streamz/StreamZText';
+import {
+  EMPTY_ACTION_LABELS,
+  LiveChannelRow,
+  LiveChipRail,
+  LiveScheduleEventRow,
+  LiveTvIdentityBar,
+  LiveTvNotice,
+  LiveTvPressable,
+  LiveTvRefreshAction,
+  LiveTvSectionHeader,
+  LiveTvSegmented,
+  LiveTvSkeleton,
+  LiveTvStateBlock,
+  MODE_OPTIONS,
+  SCOPE_OPTIONS,
+  flattenScheduleRows,
+  getCatalogueSummary,
+  getMatchSummary,
+  resolveEmptyState,
+  type LiveTvEmptyState,
+  type LiveTvMode,
+  type LiveTvScope,
+  type RailItem,
+  type ScheduleRow,
+} from '@/src/components/liveTv';
 import { useDeviceKind } from '@/src/hooks/useDeviceKind';
 import { getHorizontalPadding } from '@/src/utils/responsive';
-import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 import { releaseFieldFocusRef, type FieldHandle } from '@/src/utils/fieldFocus';
 import {
   DaddyLiveService,
   formatEventTime,
   friendlyLiveTvError,
   type LiveChannel,
+  type LiveEpgChannel,
   type LiveEpgDay,
 } from '@/src/services/DaddyLiveService';
 import type { RootStackParamList } from '@/src/navigation/types';
@@ -31,46 +70,47 @@ import {
   buildChannelIndex,
   resolveScheduleChannel,
 } from '@/src/services/liveTv/channelIndex';
+import {
+  BRAND_COLOR,
+  HEADER,
+  LIVE_TV,
+  RADIUS,
+  SPACE,
+} from '@/src/theme/tokens';
+import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
-type Mode = 'channels' | 'schedule';
-type Scope = 'all' | 'favorites' | 'recent';
 
-const Chip = ({
-  label,
-  active,
-  onPress,
-}: {
-  label: string;
-  active: boolean;
-  onPress: () => void;
-}) => (
-  <Focusable
-    onPress={onPress}
-    className={`rounded-full px-4 py-2 ${
-      active
-        ? 'border border-primary/40 bg-primary/20'
-        : 'border border-border bg-card'
-    }`}
-    focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
-  >
-    <Text
-      size="sm"
-      className={active ? 'font-semibold text-foreground' : 'text-foreground'}
-    >
-      {label}
-    </Text>
-  </Focusable>
-);
+/**
+ * The glyph each designed empty state carries. Kept next to the screen rather than
+ * in the layout module, because the module decides what a dead end *says* and stays
+ * free of React Native so it can be unit-tested.
+ */
+const EMPTY_ICONS: Record<LiveTvEmptyState['icon'], LucideIcon> = {
+  favorites: Star,
+  recent: History,
+  search: SearchX,
+  category: Radio,
+  schedule: Calendar,
+  catalogue: CloudOff,
+};
+
+/** The one list windowing for both modes: 12.5k rows must never be realized at once. */
+const LIST_WINDOW = {
+  initialNumToRender: LIVE_TV.listInitial,
+  maxToRenderPerBatch: LIVE_TV.listBatch,
+  windowSize: LIVE_TV.listWindowSize,
+} as const;
 
 export const LiveTvScreen = () => {
   const navigation = useNavigation<Nav>();
   const insets = useSafeAreaInsets();
   const deviceKind = useDeviceKind();
+  const { width: screenWidth } = useWindowDimensions();
   const padding = getHorizontalPadding(deviceKind);
 
-  const [mode, setMode] = useState<Mode>('channels');
-  const [scope, setScope] = useState<Scope>('all');
+  const [mode, setMode] = useState<LiveTvMode>('channels');
+  const [scope, setScope] = useState<LiveTvScope>('all');
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<string | null>(null);
   const [dayIndex, setDayIndex] = useState(0);
@@ -156,6 +196,10 @@ export const LiveTvScreen = () => {
   // catalogue is twelve and a half thousand entries long. Scanning it per row, per render,
   // was the tab's whole cost; the ids the rows already carry index it instead.
   const channelIndex = useMemo(() => buildChannelIndex(channels), [channels]);
+  const resolveChannel = useCallback(
+    (reference: LiveEpgChannel) => resolveScheduleChannel(channelIndex, reference),
+    [channelIndex],
+  );
   const scheduleSections = useMemo(() => {
     if (!scheduleDay) return [];
     const q = query.trim().toLowerCase();
@@ -171,6 +215,54 @@ export const LiveTvScreen = () => {
       }))
       .filter((section) => section.events.length > 0);
   }, [scheduleDay, category, query]);
+
+  // Header rows and listings on one virtualised plane. Rendering a whole category
+  // inside a single list item is what let the schedule put hundreds of children under
+  // one container; the time label is formatted here, once per listing, rather than by
+  // a row on every render.
+  const scheduleRows = useMemo(
+    () => flattenScheduleRows(scheduleSections, formatEventTime),
+    [scheduleSections],
+  );
+
+  const categoryItems = useMemo<RailItem[]>(
+    () => [
+      { key: '*', label: 'All categories' },
+      ...categories.map((name) => ({ key: name, label: name })),
+    ],
+    [categories],
+  );
+
+  const dayItems = useMemo<RailItem[]>(
+    () => days.map((day, index) => ({
+      key: String(index),
+      label: day.label || `Day ${index + 1}`,
+    })),
+    [days],
+  );
+
+  const emptyState = useMemo(
+    () =>
+      resolveEmptyState({
+        mode,
+        scope,
+        query,
+        category,
+        favoritesCount: favorites.size,
+        recentsCount: recents.length,
+      }),
+    [mode, scope, query, category, favorites.size, recents.length],
+  );
+
+  // Stable identity on purpose: the row is memoised, and a fresh lambda per render
+  // would undo that for all twelve and a half thousand of them.
+  const toggleFavorite = useCallback((channelId: string) => {
+    DaddyLiveService.toggleFavorite(channelId)
+      .then((next) => setFavorites(new Set(next)))
+      // A star that would not save is worth one line in the notice band, not a dialog;
+      // the list itself is untouched and the row simply stays as it was.
+      .catch((e: unknown) => setError(friendlyLiveTvError(e)));
+  }, []);
 
   const playChannel = useCallback(
     async (channel: LiveChannel) => {
@@ -204,196 +296,205 @@ export const LiveTvScreen = () => {
     [playChannel],
   );
 
-  const onToggleFavorite = useCallback(async (channelId: string) => {
-    const next = await DaddyLiveService.toggleFavorite(channelId);
-    setFavorites(new Set(next));
-  }, []);
+  const clearQuery = useCallback(() => setQuery(''), []);
+  const runEmptyAction = useCallback(() => {
+    if (emptyState.action === 'clearSearch') setQuery('');
+    else if (emptyState.action === 'clearCategory') setCategory(null);
+    else if (emptyState.action === 'showAll') {
+      setScope('all');
+      setCategory(null);
+    }
+  }, [emptyState.action]);
+
+  const refresh = useCallback(() => {
+    setRefreshing(true);
+    void load(true);
+  }, [load]);
 
   const renderChannel = useCallback(
-    ({ item }: { item: LiveChannel }) => {
-      const resolving = item.id === resolvingId;
-      const starred = favorites.has(item.id);
-      return (
-        <Focusable
-          onPress={() => openChannel(item)}
-          className="mb-2 rounded-xl bg-card px-4 py-3"
-          focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
-        >
-          <HStack className="items-center justify-between">
-            <VStack className="mr-3 flex-1">
-              <Text size="md" bold className="text-foreground" numberOfLines={1}>
-                {item.name}
-              </Text>
-              {item.nowPlaying ? (
-                <Text size="sm" className="text-muted-foreground" numberOfLines={1}>
-                  Now: {item.nowPlaying}
-                </Text>
-              ) : item.nextUp ? (
-                <Text size="sm" className="text-muted-foreground" numberOfLines={1}>
-                  Next: {item.nextUp}
-                </Text>
-              ) : null}
-            </VStack>
-            <HStack space="sm" className="items-center">
-              {resolving ? <Spinner size="small" color="#E50914" /> : null}
-              <Focusable
-                onPress={() => void onToggleFavorite(item.id)}
-                className="rounded-full p-2"
-                focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
-              >
-                <Icon
-                  as={Star}
-                  size="md"
-                  className={starred ? 'text-primary' : 'text-muted-foreground'}
-                />
-              </Focusable>
-            </HStack>
-          </HStack>
-        </Focusable>
-      );
-    },
-    [favorites, onToggleFavorite, openChannel, resolvingId],
+    ({ item }: { item: LiveChannel }) => (
+      <LiveChannelRow
+        channel={item}
+        starred={favorites.has(item.id)}
+        resolving={item.id === resolvingId}
+        onOpen={openChannel}
+        onToggleFavorite={toggleFavorite}
+      />
+    ),
+    [favorites, openChannel, resolvingId, toggleFavorite],
+  );
+
+  const renderScheduleRow = useCallback(
+    ({ item }: { item: ScheduleRow }) =>
+      item.kind === 'header' ? (
+        <LiveTvSectionHeader name={item.name} eventCount={item.eventCount} />
+      ) : (
+        <LiveScheduleEventRow
+          row={item}
+          resolveChannel={resolveChannel}
+          resolvingId={resolvingId}
+          onOpen={openChannel}
+        />
+      ),
+    [openChannel, resolveChannel, resolvingId],
+  );
+
+  const emptyList = useMemo(
+    () => (
+      <Box style={{ paddingHorizontal: padding, paddingTop: SPACE.xxxl }}>
+        <LiveTvStateBlock
+          icon={EMPTY_ICONS[emptyState.icon]}
+          title={emptyState.title}
+          message={emptyState.message}
+          actionLabel={
+            emptyState.action ? EMPTY_ACTION_LABELS[emptyState.action] : undefined
+          }
+          onAction={emptyState.action ? runEmptyAction : undefined}
+        />
+      </Box>
+    ),
+    [emptyState, padding, runEmptyAction],
   );
 
   if (loading) {
     return (
-      <Center className="flex-1 bg-background">
-        <Spinner size="large" color="#E50914" />
-      </Center>
+      <Box className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
+        <Box style={{ paddingHorizontal: padding }} className="pt-1">
+          <LiveTvIdentityBar title="Live TV" />
+        </Box>
+        <LiveTvSkeleton horizontalPadding={padding} />
+      </Box>
     );
   }
 
   if (error && !channels.length) {
     return (
-      <Center className="flex-1 bg-background px-8">
-        <VStack space="lg" className="items-center">
-          <Icon as={Radio} size="xl" className="text-muted-foreground" />
-          <Text className="text-center text-muted-foreground">{error}</Text>
-          <Button
-            variant="outline"
-            onPress={() => {
-              setLoading(true);
-              void load(true);
-            }}
-          >
-            <ButtonText>Try again</ButtonText>
-          </Button>
-        </VStack>
-      </Center>
+      <Box className="flex-1 bg-background px-8" style={{ paddingTop: insets.top }}>
+        <StreamZErrorState
+          title="Live TV is not available"
+          message={error}
+          actionLabel={refreshing ? 'Retrying…' : 'Try again'}
+          onAction={refresh}
+        />
+      </Box>
     );
   }
 
   return (
     <Box className="flex-1 bg-background" style={{ paddingTop: insets.top }}>
-      <Box style={{ paddingHorizontal: padding }} className="pb-3 pt-2">
-        <Heading size="xl" bold className="text-foreground">
-          Live TV
-        </Heading>
-        <HStack space="sm" className="mt-3">
-          <Chip
-            label="Channels"
-            active={mode === 'channels'}
-            onPress={() => setMode('channels')}
-          />
-          <Chip
-            label="Schedule"
-            active={mode === 'schedule'}
-            onPress={() => setMode('schedule')}
-          />
-        </HStack>
-        <Box className="mt-3">
-          <Input>
+      {/* Five bands, one gap between each: identity, what you are looking at, the way
+          to find a channel, which list of channels, and which kind of channel. */}
+      <VStack
+        className="pb-1 pt-1"
+        style={{ paddingHorizontal: padding, gap: LIVE_TV.bandGap }}
+      >
+        <LiveTvIdentityBar
+          title="Live TV"
+          summary={getCatalogueSummary(channels.length, days.length)}
+          right={
+            <LiveTvRefreshAction refreshing={refreshing} onPress={refresh} />
+          }
+        />
+
+        <LiveTvSegmented
+          options={MODE_OPTIONS}
+          value={mode}
+          onChange={setMode}
+          role="tab"
+          fill
+          accessibilityLabel="Live TV view"
+        />
+
+        <Box className="relative">
+          <Input className="h-12 rounded-full bg-card">
             <InputSlot className="pl-3">
               <InputIcon as={SearchIcon} className="text-muted-foreground" />
             </InputSlot>
             <InputField
-              // gluestack types this ref as the component's props bag but forwards it to the
-              // React Native `TextInput`, which owns `blur`/`isFocused` — hence the cast.
+              // Short on purpose: the focus handle has to be the first prop on the field.
               ref={fieldRef as unknown as Ref<ComponentRef<typeof InputField>>}
               placeholder={
-                mode === 'channels'
-                  ? 'Search channels or events'
-                  : 'Search schedule'
+                mode === 'channels' ? 'Search channels or events' : 'Search the guide'
+              }
+              accessibilityLabel={
+                mode === 'channels' ? 'Search channels or events' : 'Search the programme guide'
               }
               value={query}
               onChangeText={setQuery}
+              onSubmitEditing={releaseField}
+              returnKeyType="search"
+              autoCorrect={false}
+              autoCapitalize="none"
+              className="pr-10"
             />
           </Input>
+          {query.length > 0 ? (
+            <Box className="absolute right-1 top-0 h-full items-center justify-center">
+              <LiveTvPressable
+                onPress={clearQuery}
+                accessibilityLabel="Clear the search"
+                className="items-center justify-center rounded-full"
+                focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+                style={{
+                  width: HEADER.actionTarget,
+                  height: HEADER.actionTarget,
+                  borderRadius: RADIUS.pill,
+                }}
+              >
+                <Icon as={X} size="lg" className="text-muted-foreground" />
+              </LiveTvPressable>
+            </Box>
+          ) : null}
         </Box>
+
         {mode === 'channels' ? (
-          <HStack space="sm" className="mt-3">
-            <Chip
-              label="All"
-              active={scope === 'all'}
-              onPress={() => setScope('all')}
+          <HStack className="items-center justify-between">
+            {/* Same track as the mode control above it, sized to its labels instead of
+                to the row: which list you are in outranks which list you are looking at. */}
+            <LiveTvSegmented
+              options={SCOPE_OPTIONS}
+              value={scope}
+              onChange={setScope}
+              fill={false}
+              accessibilityLabel="Channel list"
             />
-            <Chip
-              label="Favorites"
-              active={scope === 'favorites'}
-              onPress={() => setScope('favorites')}
-            />
-            <Chip
-              label="Recent"
-              active={scope === 'recent'}
-              onPress={() => setScope('recent')}
-            />
+            <StreamZText variant="metadata" numberOfLines={1} className="ml-2">
+              {getMatchSummary(orderedChannels.length, query.trim().length > 0)}
+            </StreamZText>
           </HStack>
         ) : null}
-      </Box>
+      </VStack>
 
-      <Box className="mb-3">
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={{
-            paddingHorizontal: padding,
-            gap: 8,
-            flexDirection: 'row',
-          }}
-        >
-          <Chip
-            label="All categories"
-            active={category == null}
-            onPress={() => setCategory(null)}
+      {/* The rails carry the screen's inset as real scroll-content padding, so the last
+          chip stops at the edge. Fixed height: switching mode cannot move the list. */}
+      {mode === 'schedule' && dayItems.length > 0 ? (
+        <Box className="mt-3">
+          <LiveChipRail
+            items={dayItems}
+            activeKey={String(dayIndex)}
+            onSelect={(key) => setDayIndex(Number(key))}
+            accessibilityLabel="Guide day"
+            horizontalPadding={padding}
+            screenWidth={screenWidth}
           />
-          {categories.map((name) => (
-            <Chip
-              key={name}
-              label={name}
-              active={category === name}
-              onPress={() => setCategory(name)}
-            />
-          ))}
-        </ScrollView>
-      </Box>
-
-      {mode === 'schedule' && days.length > 0 ? (
-        <Box className="mb-3">
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={{
-              paddingHorizontal: padding,
-              gap: 8,
-              flexDirection: 'row',
-            }}
-          >
-            {days.map((day, index) => (
-              <Chip
-                key={`${day.date ?? day.label}-${index}`}
-                label={day.label || `Day ${index + 1}`}
-                active={index === dayIndex}
-                onPress={() => setDayIndex(index)}
-              />
-            ))}
-          </ScrollView>
         </Box>
       ) : null}
 
+      <Box className="mt-3">
+        <LiveChipRail
+          items={categoryItems}
+          activeKey={category ?? '*'}
+          onSelect={(key) => setCategory(key === '*' ? null : key)}
+          accessibilityLabel="Channel category"
+          horizontalPadding={padding}
+          screenWidth={screenWidth}
+        />
+      </Box>
+
       {error ? (
-        <Text size="sm" className="px-4 pb-2 text-muted-foreground">
-          {error}
-        </Text>
+        <Box style={{ paddingHorizontal: padding }} className="mt-3">
+          <LiveTvNotice icon={CloudOff} message={error} onRetry={refresh} />
+        </Box>
       ) : null}
 
       {mode === 'channels' ? (
@@ -403,93 +504,46 @@ export const LiveTvScreen = () => {
           renderItem={renderChannel}
           contentContainerStyle={{
             paddingHorizontal: padding,
-            paddingBottom: insets.bottom + 24,
+            paddingBottom: insets.bottom + SPACE.xxl,
+            paddingTop: SPACE.sm,
+            gap: LIVE_TV.rowGap,
           }}
+          {...LIST_WINDOW}
+          removeClippedSubviews
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void load(true);
-              }}
-              tintColor="#E50914"
+              onRefresh={refresh}
+              tintColor={BRAND_COLOR.primary}
             />
           }
-          ListEmptyComponent={
-            <Center className="py-16">
-              <Text className="text-muted-foreground">No channels match.</Text>
-            </Center>
-          }
+          ListEmptyComponent={emptyList}
         />
       ) : (
         <FlatList
-          data={scheduleSections}
-          keyExtractor={(section) => section.name}
+          data={scheduleRows}
+          keyExtractor={(row) => row.key}
+          renderItem={renderScheduleRow}
           contentContainerStyle={{
             paddingHorizontal: padding,
-            paddingBottom: insets.bottom + 24,
+            paddingBottom: insets.bottom + SPACE.xxl,
+            paddingTop: SPACE.sm,
+            gap: LIVE_TV.rowGap,
           }}
+          {...LIST_WINDOW}
+          removeClippedSubviews
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
-              onRefresh={() => {
-                setRefreshing(true);
-                void load(true);
-              }}
-              tintColor="#E50914"
+              onRefresh={refresh}
+              tintColor={BRAND_COLOR.primary}
             />
           }
-          ListEmptyComponent={
-            <Center className="py-16">
-              <Text className="text-muted-foreground">No events match.</Text>
-            </Center>
-          }
-          renderItem={({ item: section }) => (
-            <Box className="mb-6">
-              <Heading size="sm" className="mb-2 text-foreground">
-                {section.name}
-              </Heading>
-              {section.events.map((event) => (
-                <Box
-                  key={`${event.id ?? event.title}-${event.time}`}
-                  className="mb-3 rounded-xl bg-card px-4 py-3"
-                >
-                  <HStack className="items-baseline justify-between">
-                    <Text size="xs" className="text-primary">
-                      {formatEventTime(event)}
-                    </Text>
-                    <Text
-                      size="sm"
-                      bold
-                      className="ml-3 flex-1 text-foreground"
-                      numberOfLines={2}
-                    >
-                      {event.title}
-                    </Text>
-                  </HStack>
-                  <VStack space="xs" className="mt-2">
-                    {event.channels.map((ch) => (
-                      <Focusable
-                        key={ch.id}
-                        onPress={() => {
-                          openChannel(
-                            resolveScheduleChannel(channelIndex, ch),
-                          );
-                        }}
-                        className="rounded-lg py-1"
-                        focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                      >
-                        <Text size="sm" className="text-muted-foreground">
-                          {ch.name}
-                          {resolvingId === ch.id ? '…' : ''}
-                        </Text>
-                      </Focusable>
-                    ))}
-                  </VStack>
-                </Box>
-              ))}
-            </Box>
-          )}
+          ListEmptyComponent={emptyList}
         />
       )}
     </Box>

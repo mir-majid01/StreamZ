@@ -219,6 +219,62 @@ export const HEADER = {
   logoScaleSettled: 1,
 } as const;
 
+/**
+ * The Live TV browse screen (owner: "premium, production-quality dark interface").
+ * Raw numbers for the same reason `HEADER` carries them: these are measurements
+ * React Native has to take, not classes Tailwind can reach.
+ *
+ * Two control families are used by everything on the screen — a segmented track
+ * (`Channels`/`Schedule`, `All`/`Favorites`/`Recent`) and a chip (categories, EPG
+ * days) — and each is sized so the *press target*, not the painted shape, clears
+ * the 44dp floor the brief sets: a chip paints at `chipHeight` and adds
+ * `chipHitSlop` above and below, a segment is the track minus `trackInset`.
+ */
+export const LIVE_TV = {
+  /** Channel artwork tile: one square, on the same measure as the touch floor. */
+  logoTile: 44,
+  /** Padding inside the tile, so a wide `tvg-logo` is contained, never stretched. */
+  logoInset: 6,
+  /** Smallest tile worth a two-letter monogram; below this the glyph is one letter. */
+  monogramTwoLetterMin: 30,
+  /** Row content floor: the tile plus the row's own padding, held for text scaling. */
+  rowMinHeight: 72,
+  /** Trailing favourite control: the app-wide touch target, taken from the header. */
+  rowActionTarget: HEADER.actionTarget,
+  /** Segmented track. `trackHeight - 2 * trackInset` is the segment, i.e. 44dp. */
+  trackHeight: 48,
+  trackInset: 2,
+  /** The search field: the same 48dp measure the app's other search field uses. */
+  searchFieldHeight: 48,
+  /** Chip rail height is fixed so switching mode cannot jump the layout. */
+  chipHeight: 36,
+  chipRailHeight: 44,
+  /** The difference between a 36dp chip and a 44dp target, split top and bottom. */
+  chipHitSlop: 4,
+  /** A chip wider than this ellipsizes instead of pushing the rail past the screen edge. */
+  chipMaxWidth: 200,
+  /** Gap between chips in a rail. */
+  chipGap: SPACE.sm,
+  /** Gap between the screen's bands (identity, nav, search, scope, chips). */
+  bandGap: SPACE.md,
+  /** Gap between list rows: one step tighter than the bands, so content reads as content. */
+  rowGap: SPACE.sm,
+  /** Schedule's ruled time column: fits "10:30 PM" at the secondary size without wrapping. */
+  scheduleTimeWidth: 64,
+  /** Channels listed under an event before the row offers to show the rest. */
+  eventChannelPreview: 3,
+  /** Logo hosts are third-party: after this many failures one host stops being asked. */
+  logoHostFailureLimit: 3,
+  /** ...and the number of hosts remembered at all, so the budget cannot grow unbounded. */
+  logoHostBudget: 12,
+  /** Windowing the 12.5k-row catalogue: the drawer's proven numbers, reused here. */
+  listInitial: 10,
+  listBatch: 10,
+  listWindowSize: 7,
+  /** Cap on the row's two text lines, so a large system font cannot break the rhythm. */
+  rowMaxFontScale: 2,
+} as const;
+
 // ── Motion language (§29-§30) ──────────────────────────────────────────────
 export const MOTION = {
   /** Micro feedback: press scale, icon ticks. */
