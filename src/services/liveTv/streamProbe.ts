@@ -33,6 +33,12 @@ export type StreamProbeObservation =
   | 'tls-handshake-failed'
   /** Our own deadline passed with no answer. Weak on its own: a distant CDN can be slow and fine. */
   | 'timed-out'
+  /**
+   * The caller cancelled — the user changed channel or left the player. Not a finding about the
+   * stream: it is the app stopping asking. Kept distinct so a cancelled probe can never be read as
+   * evidence, and so the screen does not show a diagnosis nobody waited for.
+   */
+  | 'cancelled'
   /** Something thrown that identifies no layer. Reported as what it is: not observed. */
   | 'not-observed';
 
@@ -46,6 +52,12 @@ export interface StreamProbeResult {
   status?: number;
   /** Content-Type header as the server sent it, lowercased. Null when absent. */
   contentType?: string | null;
+  /**
+   * `Retry-After` on a 429 or 503, in whole seconds, when the server actually sent a number.
+   * Read as metadata only — it is never used to decide anything on its own, and the caller
+   * clamps it before using it as a wait.
+   */
+  retryAfterSeconds?: number | null;
   /** Which method produced the answer; HEAD is the first try, GET only when HEAD is refused. */
   method: 'HEAD' | 'GET';
   /** The observed failure text with the URL scrubbed out. Diagnostics, never shown as-is. */
@@ -177,6 +189,23 @@ const headerValue = (res: ProbeResponseLike, name: string): string | null => {
   }
 };
 
+/**
+ * A `Retry-After` value in whole seconds, or null when the header is absent or is not a number.
+ *
+ * This is metadata, not a decision. A server is allowed to ask for an hour, and obeying that
+ * literally would strand the user on an error screen for an hour, so the classifier reads this and
+ * clamps it before anything waits on it. An HTTP-date is legal here too; no host in these
+ * catalogues sends one, and guessing at a date against a device clock the app has not verified is
+ * reported as "no number" instead.
+ */
+export const retryAfterSecondsOf = (raw: string | null | undefined): number | null => {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const seconds = Number(trimmed);
+  return Number.isFinite(seconds) ? seconds : null;
+};
+
 export interface ProbeOptions {
   timeoutMs?: number;
   /** The stream's own headers; several IPTV CDNs 403 a bare request. */
@@ -184,6 +213,12 @@ export interface ProbeOptions {
   fetchImpl?: ProbeFetch;
   /** Injectable for tests; defaults to the real clock. */
   now?: () => number;
+  /**
+   * The caller's cancellation. When this aborts, the probe reports `cancelled` rather than
+   * `timed-out`: "the user left the channel" is not evidence about the stream, and must not be
+   * stored as if it were a measurement.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -220,6 +255,26 @@ export const probeStream = async (
   const deadline = startedAt + timeoutMs;
   const controller = new AbortController();
   let timedOut = false;
+  // The caller's cancellation is folded into the same controller, so one abort path ends the
+  // request whatever caused it. `callerCancelled` is tracked separately because the *reason* has
+  // to survive into the result: a user who left the channel is not a measurement of the stream.
+  const external = options.signal ?? null;
+  let callerCancelled = external?.aborted === true;
+  if (external && !callerCancelled) {
+    try {
+      external.addEventListener('abort', onCallerAbort, { once: true });
+    } catch {
+      // An implementation without addEventListener cannot cancel; the deadline still bounds it.
+    }
+  }
+  function onCallerAbort(): void {
+    callerCancelled = true;
+    try {
+      controller.abort();
+    } catch {
+      // Already ended by the abort itself.
+    }
+  }
   const timer = setTimeout(() => {
     timedOut = true;
     try {
@@ -256,10 +311,24 @@ export const probeStream = async (
       ms: Math.max(0, now() - startedAt),
       status: res.status,
       contentType,
+      retryAfterSeconds: retryAfterSecondsOf(headerValue(res, 'retry-after')),
       method,
       detail: `HTTP ${res.status}`,
     };
   };
+
+  const cancelledResult = (method: 'HEAD' | 'GET'): StreamProbeResult => ({
+    observation: 'cancelled',
+    host,
+    ms: Math.max(0, now() - startedAt),
+    method,
+    detail: 'cancelled before an answer was observed',
+  });
+
+  if (callerCancelled) {
+    clearTimeout(timer);
+    return cancelledResult('HEAD');
+  }
 
   try {
     const head = await request('HEAD');
@@ -271,6 +340,9 @@ export const probeStream = async (
         try {
           return await request('GET');
         } catch (err) {
+          if (callerCancelled) {
+            return { ...cancelledResult('GET'), status: head.status, contentType: head.contentType };
+          }
           if (timedOut) {
             return { ...head, observation: 'timed-out', status: undefined, contentType: undefined, detail: 'GET after HEAD did not answer in time' };
           }
@@ -286,6 +358,9 @@ export const probeStream = async (
     }
     return head;
   } catch (err) {
+    if (callerCancelled) {
+      return cancelledResult('HEAD');
+    }
     if (timedOut) {
       return {
         observation: 'timed-out',
@@ -305,6 +380,13 @@ export const probeStream = async (
     };
   } finally {
     clearTimeout(timer);
+    if (external) {
+      try {
+        external.removeEventListener('abort', onCallerAbort);
+      } catch {
+        // Nothing to detach on an implementation that never attached it.
+      }
+    }
   }
 };
 

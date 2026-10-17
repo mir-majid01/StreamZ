@@ -59,6 +59,12 @@ export type PlaybackFailureCategory =
   | 'stream-expired'
   /** The server reached the point of deciding, and said no. */
   | 'access-rejected'
+  /** 404 / 410: the address the catalogue published is no longer served. */
+  | 'stream-gone'
+  /** 429: the server is throttling this client, and will say more later. */
+  | 'rate-limited'
+  /** 5xx: the publisher's own origin failed. Not this app, and not the user's network. */
+  | 'upstream-unreachable'
   /** Playback was running and the connection went away underneath it. */
   | 'network-lost-mid-stream'
   /** Nothing observed supports any of the above. */
@@ -76,6 +82,18 @@ export interface PlaybackFailure {
   code: number | null;
   /** Host of the stream URL — public information, safe to name on screen. */
   host: string | null;
+  /**
+   * The HTTP status, when something actually read one. media3 does not put the status in the
+   * payload for `ERROR_CODE_IO_BAD_HTTP_STATUS` (ReactExoplayerView.java:1994 sends only the name
+   * and `"2"+code`), so this is non-null only when a probe answered. Null means "we do not know
+   * the status", and the copy has to say that instead of inventing a reason.
+   */
+  status: number | null;
+  /**
+   * How long to wait before the next automatic attempt, when the server asked for a wait. Already
+   * clamped by this file; null means use the retry schedule's own cadence.
+   */
+  backoffMs: number | null;
 }
 
 export interface PlaybackFailureInput {
@@ -119,14 +137,17 @@ const MEDIA3_CODE_BY_NAME: Readonly<Record<string, number>> = {
 };
 
 /**
- * A retry can plausibly fix these three and only these three. Everything else in the table below
- * reproduces itself: a dead host stays dead, a refused token stays refused, a format this device
- * cannot decode will fail identically on attempt two.
+ * The categories a retry can plausibly change. A dead host stays dead, a refused token stays
+ * refused, and an address the publisher removed comes back 404 on every attempt — so nothing in
+ * that group is here. `rate-limited` and `upstream-unreachable` are, because both describe a
+ * server that is asking to be approached again later, which is exactly what a bounded backoff is.
  */
 const TRANSIENT_CATEGORIES: ReadonlySet<PlaybackFailureCategory> = new Set([
   'connection-timeout',
   'network-lost-mid-stream',
   'stream-expired',
+  'rate-limited',
+  'upstream-unreachable',
 ]);
 
 const CATEGORY_BY_CODE_NAME: Readonly<Record<string, PlaybackFailureCategory>> = {
@@ -136,7 +157,7 @@ const CATEGORY_BY_CODE_NAME: Readonly<Record<string, PlaybackFailureCategory>> =
   ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT: 'connection-timeout',
   ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE: 'unsupported-format',
   ERROR_CODE_IO_BAD_HTTP_STATUS: 'http-error',
-  ERROR_CODE_IO_FILE_NOT_FOUND: 'http-error',
+  ERROR_CODE_IO_FILE_NOT_FOUND: 'stream-gone',
   ERROR_CODE_IO_NO_PERMISSION: 'access-rejected',
   ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED: 'access-rejected',
   ERROR_CODE_PARSING_CONTAINER_MALFORMED: 'invalid-manifest',
@@ -150,6 +171,41 @@ const CATEGORY_BY_CODE_NAME: Readonly<Record<string, PlaybackFailureCategory>> =
   ERROR_CODE_DECODING_FORMAT_UNSUPPORTED: 'unsupported-format',
   ERROR_CODE_AUDIO_TRACK_INIT_FAILED: 'unsupported-format',
   ERROR_CODE_AUDIO_TRACK_WRITE_FAILED: 'unsupported-format',
+};
+
+/**
+ * Which bucket an HTTP status belongs in. This is the whole reason the probe exists on the retry
+ * path: media3 hands the app "bad HTTP status" and the number, but not the status itself, and
+ * "the publisher took the feed down", "you are being throttled" and "the origin is on fire" are
+ * three different facts with three different answers to "will trying again help".
+ *
+ * 408 is treated as transient (a timeout with a status attached), and 425 too early-content is
+ * left to fall through as a plain http-error rather than guessed at.
+ */
+export const categoryFromHttpStatus = (status: number): PlaybackFailureCategory => {
+  if (status === 401 || status === 403 || status === 407) return 'access-rejected';
+  if (status === 404 || status === 410) return 'stream-gone';
+  if (status === 429) return 'rate-limited';
+  if (status === 408) return 'connection-timeout';
+  if (status >= 500 && status <= 599) return 'upstream-unreachable';
+  return 'http-error';
+};
+
+/**
+ * A server asking for an hour of patience is not obeyed for an hour. The floor keeps a hammering
+ * client from re-asking in under a second; the ceiling keeps a user from sitting on an error
+ * screen while the app pretends to be waiting. Outside those bounds the schedule's own cadence
+ * (900 ms, then 1800 ms) is used, because a wait the app made up is at least an honest one.
+ */
+export const MIN_RETRY_BACKOFF_MS = 1_000;
+export const MAX_RETRY_BACKOFF_MS = 20_000;
+
+const clampBackoffMs = (seconds: number | null | undefined): number | null => {
+  if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds < 0) return null;
+  const ms = Math.round(seconds * 1000);
+  if (ms < MIN_RETRY_BACKOFF_MS) return MIN_RETRY_BACKOFF_MS;
+  if (ms > MAX_RETRY_BACKOFF_MS) return MAX_RETRY_BACKOFF_MS;
+  return ms;
 };
 
 const hostOf = (url?: string | null): string | null => {
@@ -190,14 +246,12 @@ const media3CodeFromPayload = (payload: PlayerErrorPayload): number | null => {
 const nameFromCode = (code: number): string | null =>
   Object.keys(MEDIA3_CODE_BY_NAME).find((name) => MEDIA3_CODE_BY_NAME[name] === code) ?? null;
 
-/** Statuses that mean "the server reached a decision and refused this request". */
-const isRefusal = (status: number): boolean => status === 401 || status === 403 || status === 407;
-
 const sentence = (
   category: PlaybackFailureCategory,
   parts: {
     host: string | null;
-    status?: number;
+    /** The status a probe read, or null when nothing read one. Never a guess. */
+    status?: number | null;
     contentType?: string | null;
     probe?: StreamProbeResult | null;
     media3Name: string | null;
@@ -224,9 +278,20 @@ const sentence = (
       }
       return `${who} did not answer in time. Its server is overloaded, or the route to it is congested.`;
     case 'http-error':
+      // No status means no claim. media3 says "the server answered a bad status" and does not
+      // send the status; inventing "broken or taken down" from that is exactly the blanket label
+      // this screen is being fixed for.
       return parts.status
-        ? `${who} replied with HTTP ${parts.status}. The feed it publishes is broken or has been taken down.`
-        : `${who} replied with an error instead of a stream. The published feed is broken or gone.`;
+        ? `${who} answered with HTTP ${parts.status}, which this app has no rule for yet. The code below is what makes it reportable.`
+        : `${who} answered the player with an error status. The app asked for the reason and could not read it either, so nothing more specific than that is claimed.`;
+    case 'stream-gone':
+      return parts.status === 410
+        ? `${who} reports this stream has been removed (HTTP 410). The address the channel list publishes is no longer valid, and asking it again will not bring it back.`
+        : `${who} has no stream at that address (HTTP 404). The channel list points somewhere the publisher stopped serving — a stale entry, and not a fault of this device or this network.`;
+    case 'rate-limited':
+      return `${who} is throttling requests right now (HTTP 429). Trying again after a short wait is the fix; using a different channel meanwhile works too.`;
+    case 'upstream-unreachable':
+      return `${who}'s own server failed (HTTP ${parts.status ?? '5xx'}). The stream exists and the app reached it — the publisher's origin is the part that is down.`;
     case 'unsupported-format':
       if (parts.media3Name === 'ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE') {
         return `${who} answered with ${parts.contentType || 'a non-media content type'} instead of a stream. Its URL no longer points at media.`;
@@ -285,13 +350,17 @@ export const classifyPlaybackFailure = (
     // answer to "would retrying help".
     category = input.playbackStarted ? 'network-lost-mid-stream' : 'unknown';
   }
+  // The status decides these, and only a probe ever reads a status. Without one, `http-error` with
+  // `status: null` is what the copy is allowed to claim — "an error status, reason unreadable".
+  // Calling every HTTP failure a broken feed is the bug being fixed here.
+  const httpStatus = typeof probe?.status === 'number' ? probe.status : null;
   if (media3Name === 'ERROR_CODE_IO_BAD_HTTP_STATUS') {
-    // The payload does not carry the status; a probe that reached the same URL does. 401/403/407
-    // is a refusal, anything else is a broken feed — and without a probe the app must not pretend
-    // to know which.
-    category = probe && probe.status !== undefined && isRefusal(probe.status)
-      ? 'access-rejected'
-      : 'http-error';
+    category = httpStatus === null ? 'http-error' : categoryFromHttpStatus(httpStatus);
+  }
+  if (media3Name === 'ERROR_CODE_IO_FILE_NOT_FOUND') {
+    // media3 reached this through a file-not-found path, so the player itself named the condition
+    // and no probe is needed to say so.
+    category = httpStatus === null ? 'stream-gone' : categoryFromHttpStatus(httpStatus);
   }
 
   if (category === null) {
@@ -310,7 +379,7 @@ export const classifyPlaybackFailure = (
     }
   }
 
-  const status = probe?.status;
+  const status = typeof probe?.status === 'number' ? probe.status : null;
   return {
     category,
     message: sentence(category, {
@@ -324,6 +393,10 @@ export const classifyPlaybackFailure = (
     codeName: media3Name,
     code,
     host,
+    status,
+    // Only a throttle asks for a wait by name. Everything else keeps the schedule's own cadence,
+    // which is a wait the app chose rather than one it invented from a server's silence.
+    backoffMs: category === 'rate-limited' ? clampBackoffMs(probe?.retryAfterSeconds) : null,
   };
 };
 
@@ -360,3 +433,14 @@ export const shouldRetry = (
   usedAutomaticRetries: number,
   max: number = MAX_AUTOMATIC_LIVE_RETRIES,
 ): boolean => failure.transient && usedAutomaticRetries < max;
+
+/**
+ * How long to actually wait before attempt `attempt`. A server that named a wait (429 with
+ * `Retry-After`) is obeyed within the bounds above; everything else follows the schedule.
+ *
+ * The wait is never longer than the retry cap allows: two attempts is two waits, so the most this
+ * screen can spend waiting is twice `MAX_RETRY_BACKOFF_MS`, and a channel that needs more than that
+ * is a channel the user should be told about rather than one the app sits on.
+ */
+export const retryDelayMsFor = (failure: PlaybackFailure, attempt: number): number =>
+  failure.backoffMs ?? automaticRetryDelayMs(attempt);

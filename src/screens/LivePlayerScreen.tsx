@@ -27,9 +27,9 @@ import {
   type PlayerErrorPayload,
 } from '@/src/services/liveTv/playbackError';
 import {
-  automaticRetryDelayMs,
   automaticRetryNotice,
   classifyPlaybackFailure,
+  retryDelayMsFor,
   shouldRetry,
 } from '@/src/services/liveTv/playbackFailure';
 import { probeStream, type StreamProbeResult } from '@/src/services/liveTv/streamProbe';
@@ -94,6 +94,8 @@ export const LivePlayerScreen = ({
    */
   const [probe, setProbe] = useState<StreamProbeResult | null>(null);
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** The in-flight question to the stream host, so leaving the channel can cancel it. */
+  const probeRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
 
   const overlayOpen = channelsOpen;
@@ -109,6 +111,16 @@ export const LivePlayerScreen = ({
       if (retryTimerRef.current !== null) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
+      }
+      // A probe still in flight when the player is closed has no screen left to report to.
+      const inFlight = probeRef.current;
+      probeRef.current = null;
+      if (inFlight) {
+        try {
+          inFlight.abort();
+        } catch {
+          // Nothing to clean up if the abort itself failed.
+        }
       }
       restoreOrientation();
       if (Platform.OS === 'android') {
@@ -128,6 +140,51 @@ export const LivePlayerScreen = ({
   }, []);
 
   /**
+   * Cancels a question already asked to the stream host.
+   *
+   * The probe is one bounded request, but "bounded" is not the same as "belongs to a channel the
+   * user has left". Changing channel or backing out of the player aborts it, so a slow answer about
+   * the previous tune can never arrive late and be drawn as the diagnosis of the new one.
+   */
+  const cancelProbe = useCallback(() => {
+    const active = probeRef.current;
+    probeRef.current = null;
+    if (!active) return;
+    try {
+      active.abort();
+    } catch {
+      // An abort that throws changes nothing: the probe's own deadline still ends it.
+    }
+  }, []);
+
+  /**
+   * Ask the host that just failed the player what it actually says, once, bounded.
+   *
+   * This exists because media3's HTTP failure payload names the condition (`ERROR_CODE_IO_BAD_HTTP_STATUS`)
+   * and never carries the status, and 403, 404, 429 and 502 are four different facts with four
+   * different answers to "will trying again help". The result is an observation, not a verdict:
+   * `classifyPlaybackFailure` decides what it means.
+   */
+  const askTheHost = useCallback(
+    async (target: LiveStream): Promise<StreamProbeResult | null> => {
+      if (!target.url) return null;
+      const controller = new AbortController();
+      probeRef.current = controller;
+      try {
+        return await probeStream(target.url, {
+          headers: target.headers,
+          signal: controller.signal,
+        });
+      } catch {
+        return null;
+      } finally {
+        if (probeRef.current === controller) probeRef.current = null;
+      }
+    },
+    [],
+  );
+
+  /**
    * Everything that must be forgotten the moment the screen starts a new tune: the retries spent,
    * the diagnosis on screen, the retry notice, the probe that informed it, and the player itself
    * (the bumped token remounts `<Video>`, which is the only thing that reliably discards an
@@ -135,13 +192,16 @@ export const LivePlayerScreen = ({
    */
   const resetAttemptState = useCallback(() => {
     clearRetryTimer();
+    // A new tune means the previous one's evidence is void: the stale probe is cancelled rather
+    // than left running, and its answer is discarded rather than carried into the new diagnosis.
+    cancelProbe();
     autoRetriesRef.current = 0;
     playbackStartedRef.current = false;
     setProbe(null);
     setRetriesSpent(null);
     setRetryNotice(null);
     setAttemptToken((token) => token + 1);
-  }, [clearRetryTimer]);
+  }, [cancelProbe, clearRetryTimer]);
 
   const loadStream = useCallback(async (next: LiveChannel) => {
     // One token per request, and only the newest one may write. Channel taps are not
@@ -215,7 +275,7 @@ export const LivePlayerScreen = ({
   const rearm = useCallback(
     async (target: LiveStream | null, requestId: number): Promise<void> => {
       if (target?.url) {
-        const result = await probeStream(target.url, { headers: target.headers }).catch(() => null);
+        const result = await askTheHost(target);
         if (!mountedRef.current || requestId !== requestIdRef.current) return;
         setProbe(result ?? null);
       }
@@ -226,18 +286,49 @@ export const LivePlayerScreen = ({
       setPlayerDetail(null);
       setAttemptToken((token) => token + 1);
     },
-    [],
+    [askTheHost],
   );
 
+  /**
+   * What the player reported, in the user's language, with the retries spent.
+   *
+   * Async because one of its branches has to ask the host a question before it can honestly name
+   * the failure: media3's HTTP-status payload carries the condition and not the status. Everything
+   * this function writes is guarded by the request id it started with, so a diagnosis computed
+   * after the user changed channel is thrown away rather than painted on the new screen.
+   */
   const handlePlaybackError = useCallback(
-    (payload: PlayerErrorPayload) => {
+    async (payload: PlayerErrorPayload): Promise<void> => {
+      const requestId = requestIdRef.current;
       const url = stream?.url ?? null;
-      const classified = classifyPlaybackFailure({
+      let classified = classifyPlaybackFailure({
         payload,
         url,
         probe,
         playbackStarted: playbackStartedRef.current,
       });
+
+      // A bad HTTP status with no status read yet is the one case where the app can go and find
+      // out, and it is worth one bounded request: 403, 404, 429 and 502 need four different
+      // sentences, and only a retry decision that differs too.
+      if (
+        stream !== null &&
+        classified.codeName === 'ERROR_CODE_IO_BAD_HTTP_STATUS' &&
+        classified.status === null
+      ) {
+        const answer = await askTheHost(stream);
+        if (!mountedRef.current || requestId !== requestIdRef.current) return;
+        if (answer) {
+          setProbe(answer);
+          classified = classifyPlaybackFailure({
+            payload,
+            url,
+            probe: answer,
+            playbackStarted: playbackStartedRef.current,
+          });
+        }
+      }
+
       // Kept even when a plain-language sentence is available: which media3 code the stream raised
       // is the only thing that separates a publisher outage from a container this device cannot
       // read, and it is what makes a report actionable.
@@ -250,11 +341,10 @@ export const LivePlayerScreen = ({
         setError(null);
         setRetryNotice(automaticRetryNotice(attempt));
         clearRetryTimer();
-        const requestId = requestIdRef.current;
         retryTimerRef.current = setTimeout(() => {
           retryTimerRef.current = null;
           void rearm(stream, requestId);
-        }, automaticRetryDelayMs(attempt));
+        }, retryDelayMsFor(classified, attempt));
         return;
       }
 
@@ -263,7 +353,7 @@ export const LivePlayerScreen = ({
       setRetriesSpent(autoRetriesRef.current);
       setError(classified.message);
     },
-    [clearRetryTimer, probe, rearm, stream],
+    [askTheHost, clearRetryTimer, probe, rearm, stream],
   );
 
   /** The user's own retry: re-resolve first, so a spent stream token gets a fresh one. */

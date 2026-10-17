@@ -45,7 +45,9 @@ describe('classifyPlaybackFailure — media3 code mapping', () => {
     ['ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT', 2002, 'connection-timeout'],
     ['ERROR_CODE_TIMEOUT', 1003, 'connection-timeout'],
     ['ERROR_CODE_IO_BAD_HTTP_STATUS', 2004, 'http-error'],
-    ['ERROR_CODE_IO_FILE_NOT_FOUND', 2005, 'http-error'],
+    // 2005 is media3 naming the condition itself — file not found — so it no longer shares the
+    // generic HTTP bucket. That lumping is what made a removed feed and a 418 read identically.
+    ['ERROR_CODE_IO_FILE_NOT_FOUND', 2005, 'stream-gone'],
     ['ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE', 2003, 'unsupported-format'],
     ['ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED', 3003, 'unsupported-format'],
     ['ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED', 3004, 'unsupported-format'],
@@ -82,7 +84,7 @@ describe('classifyPlaybackFailure — media3 code mapping', () => {
         payload: { error: { errorString: 'ExoPlaybackException: ERROR_CODE_IO_FILE_NOT_FOUND' } },
         url: STREAM_URL,
       }).category,
-    ).toBe('http-error');
+    ).toBe('stream-gone');
   });
 
   it('reports the observed Star Sports failure without inventing a cause', () => {
@@ -197,7 +199,7 @@ describe('classifyPlaybackFailure — transient is a property of the category', 
     }> = [
       { payload: exo('ERROR_CODE_IO_NETWORK_CONNECTION_FAILED', 2001), category: 'dns-or-unreachable', transient: false },
       { payload: exo('ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT', 2002), category: 'connection-timeout', transient: true },
-      { payload: exo('ERROR_CODE_IO_FILE_NOT_FOUND', 2005), category: 'http-error', transient: false },
+      { payload: exo('ERROR_CODE_IO_FILE_NOT_FOUND', 2005), category: 'stream-gone', transient: false },
       { payload: exo('ERROR_CODE_DECODING_FORMAT_UNSUPPORTED', 4005), category: 'unsupported-format', transient: false },
       { payload: exo('ERROR_CODE_PARSING_MANIFEST_MALFORMED', 3002), category: 'invalid-manifest', transient: false },
       { payload: exo('ERROR_CODE_BEHIND_LIVE_WINDOW', 1002), category: 'stream-expired', transient: true },
@@ -216,8 +218,10 @@ describe('classifyPlaybackFailure — transient is a property of the category', 
       expect(failure.transient).toBe(row.transient);
       categories.add(failure.category);
     }
-    // Nothing in the agreed set is unreachable by the mapping, and nothing outside the three
-    // retryable ones reports itself as retryable.
+    // Every category this table exercises has to be reachable by the mapping, and the only
+    // retryable rows are the ones where replaying can come out differently. `rate-limited` and
+    // `upstream-unreachable` are transient too, but they are reachable only through a probe
+    // status, so `live-tv-http-status.test.ts` covers those two rather than this table.
     expect(categories.size).toBe(9);
     expect(shouldRetry(classifyPlaybackFailure({ payload: {}, url: STREAM_URL }), 0)).toBe(false);
   });
@@ -282,7 +286,7 @@ describe('classifyPlaybackFailure — context and probe sharpening', () => {
     expect(midStream.transient).toBe(true);
   });
 
-  it('uses the probe status to separate a refusal from a broken feed under BAD_HTTP_STATUS', () => {
+  it('uses the probe status to split one media3 code into the four things it can mean', () => {
     const refusal = classifyPlaybackFailure({
       payload: exo('ERROR_CODE_IO_BAD_HTTP_STATUS', 2004),
       url: STREAM_URL,
@@ -291,14 +295,26 @@ describe('classifyPlaybackFailure — context and probe sharpening', () => {
     expect(refusal.category).toBe('access-rejected');
     expect(refusal.message).toContain('403');
 
-    const broken = classifyPlaybackFailure({
+    // A 5xx is the publisher's origin failing. Reading it as "the feed is broken" was the old
+    // blanket label; it is now its own category, and it is retryable, which a broken feed is not.
+    const upstream = classifyPlaybackFailure({
       payload: exo('ERROR_CODE_IO_BAD_HTTP_STATUS', 2004),
       url: STREAM_URL,
       probe: probeOf({ observation: 'answered', status: 500 }),
     });
-    expect(broken.category).toBe('http-error');
-    expect(broken.message).toContain('500');
+    expect(upstream.category).toBe('upstream-unreachable');
+    expect(upstream.message).toContain('500');
+    expect(upstream.transient).toBe(true);
 
+    const gone = classifyPlaybackFailure({
+      payload: exo('ERROR_CODE_IO_BAD_HTTP_STATUS', 2004),
+      url: STREAM_URL,
+      probe: probeOf({ observation: 'answered', status: 404 }),
+    });
+    expect(gone.category).toBe('stream-gone');
+    expect(gone.transient).toBe(false);
+
+    // And with nothing to read, the app still may not name a status it never saw.
     const blind = classifyPlaybackFailure({
       payload: exo('ERROR_CODE_IO_BAD_HTTP_STATUS', 2004),
       url: STREAM_URL,
