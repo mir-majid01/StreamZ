@@ -8,7 +8,7 @@ import { ensureFirebase } from '@/src/firebase/init';
 import { BRAND } from '@/src/config/brand';
 import { UPDATE_CONFIG } from '@/src/config/env';
 import { getAppVersion, getInstalledAppVersion } from '@/src/utils/appVersion';
-import { apkIntegrityAvailable, inspectApk } from '@/src/utils/apkIntegrity';
+import { apkIntegrityAvailable, getInstalledVersionCode, inspectApk } from '@/src/utils/apkIntegrity';
 import {
   decideUpdate,
   evaluateApkIntegrity,
@@ -132,16 +132,19 @@ const loadCachedPolicy = async (): Promise<{
  * either.
  */
 export const evaluateReleasePolicy = async (): Promise<UpdateDecision> => {
-  const [{ outcome, policy }, cached] = await Promise.all([
+  const [{ outcome, policy }, cached, installedVersionCode] = await Promise.all([
     readReleasePolicy(),
     loadCachedPolicy(),
+    getInstalledVersionCode(),
   ]);
+  const installedVersion = getInstalledAppVersion() || getAppVersion();
 
   if (outcome === 'ok' && policy) {
     const fetchedAtMs = Date.now();
     await saveCachedPolicy(policy, fetchedAtMs);
     return decideUpdate({
-      installedVersion: getInstalledAppVersion() || getAppVersion(),
+      installedVersion,
+      installedVersionCode,
       outcome,
       policy,
       cached: { policy, fetchedAtMs },
@@ -151,7 +154,8 @@ export const evaluateReleasePolicy = async (): Promise<UpdateDecision> => {
   }
 
   return decideUpdate({
-    installedVersion: getInstalledAppVersion() || getAppVersion(),
+    installedVersion,
+    installedVersionCode,
     outcome,
     policy,
     cached,

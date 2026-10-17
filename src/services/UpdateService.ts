@@ -244,29 +244,63 @@ class UpdateService {
   async downloadApk(
     url: string,
     onProgress?: (progress: DownloadProgress) => void,
+    options?: { attempts?: number; retryDelayMs?: number; expectedBytes?: number | null },
   ): Promise<File> {
-    const destination = new File(Paths.cache, APK_FILENAME);
-    if (destination.exists) {
+    const attempts = Math.max(1, options?.attempts ?? 2);
+    const retryDelayMs = Math.max(0, options?.retryDelayMs ?? 1500);
+    const expectedBytes = options?.expectedBytes ?? null;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      const destination = new File(Paths.cache, APK_FILENAME);
+      // A previous attempt's truncated file must not be mistaken for this one's result.
       try {
-        destination.delete();
+        if (destination.exists) destination.delete();
       } catch {
-        /* best-effort — a locked/missing file here isn't fatal */
+        /* a locked file here is reported by the download itself */
+      }
+
+      const task = File.createDownloadTask(url, destination, { onProgress });
+      this.activeDownload = task;
+      try {
+        const file = await task.downloadAsync();
+        if (!file) {
+          // `downloadAsync` resolves `null` only when paused — we never pause,
+          // so this would only happen if something externally interfered.
+          throw new Error('Download did not complete.');
+        }
+        // Checked before hashing tens of megabytes: a short file is a truncated
+        // download, and saying so is more useful than a digest mismatch. Only when
+        // the platform actually reported a size — absence is not a mismatch.
+        if (
+          expectedBytes !== null &&
+          typeof file.size === 'number' &&
+          file.size !== expectedBytes
+        ) {
+          throw new Error(
+            `The download ended at ${file.size} of ${expectedBytes} bytes.`,
+          );
+        }
+        return file;
+      } catch (err) {
+        lastError = err;
+        try {
+          if (destination.exists) destination.delete();
+        } catch {
+          /* nothing to clean up */
+        }
+        // A cancellation is a user decision, not a transient failure: retrying it would
+        // restart a download the person just stopped.
+        if (this.activeDownload === null || attempt >= attempts) break;
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt));
+      } finally {
+        if (this.activeDownload === task) this.activeDownload = null;
       }
     }
 
-    const task = File.createDownloadTask(url, destination, { onProgress });
-    this.activeDownload = task;
-    try {
-      const file = await task.downloadAsync();
-      if (!file) {
-        // `downloadAsync` resolves `null` only when paused — we never pause,
-        // so this would only happen if something externally interfered.
-        throw new Error('Download did not complete.');
-      }
-      return file;
-    } finally {
-      if (this.activeDownload === task) this.activeDownload = null;
-    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('The download could not be completed.');
   }
 
   /** Cancels the in-flight `downloadApk` call, if any. No-op otherwise. */

@@ -114,12 +114,22 @@ check.
    exists — `mir-majid01/StreamZ` had no releases at the time of writing, so a URL pointing at one
    would be a guess.
 4. Write `releasePolicy/latest` with the digest of the file actually published, the certificate
-   fingerprint of the keystore that signed it, and the byte count. The rules validate the shape at
-   write time, so a document that could not survive a verified install is rejected there instead of
-   reaching phones.
+   fingerprint of the keystore that signed it, and the byte count. `scripts/publish-release-policy.mjs`
+   does the measuring: it reads the APK, hashes it, asks `apksigner` for the certificate digest
+   (the same DER hash the device recomputes), refuses to invent a certificate it could not read,
+   refuses a minimum above the latest in both dimensions, prints the document, and only with
+   `--apply` writes it — then reads it back and refuses to claim success unless the stored digest
+   is the one it computed. Verified against `ci-apk33/app-release.apk`: its digest reproduced
+   `e687be27…` from that run's own `.sha256` artifact, and the signer came back as the debug
+   certificate below.
+   When two releases share a `versionName`, publish `latestVersionCode` (and
+   `minimumSupportedVersionCode` if needed): Android compares codes, and the app now refuses to
+   call a same-name build current when the published code is higher.
 5. Confirm on a device: the update screen appears, the download completes, the three checks pass,
    and the installer opens. Android shows a one-time "allow installs from this app" prompt; no
-   in-app code can skip it, and nothing here installs silently.
+   in-app code can skip it, and nothing here installs silently. The installer's result code is now
+   read: a cancellation, an accepted install, and a system refusal are three different messages,
+   and none of them claims the update succeeded.
 
 To make a release mandatory, lower `minimumSupportedVersion`. To stop gating, delete or correct the
 document — devices read `missing` and continue working.
@@ -146,11 +156,11 @@ These are blockers, not caveats to write around:
   unproven is the runtime behaviour: whether `inspectApk` returns a real digest, package name and
   signer fingerprint on a physical device. Until that is verified, integrity checks are assumed to
   return `not_measured` and installation is refused.
-- **Firestore rules are prepared, not deployed.** The `releasePolicy/{docId}` block in
-  `firestore.rules` grants public read of exactly `releasePolicy/latest` (nothing else in the
-  collection; `/config` stays sign-in only) and admin-only writes with shape validation. Deploying
-  it changes the production project's authority, so it waits for an explicit go-ahead plus a review
-  of the diff.
+- **The `releasePolicy` rules are live.** The block was written on 2026-10-13 and reached production
+  with the whole-file rules release of 2026-10-16 (`firestore: released rules firestore.rules to
+  cloud.firestore`), so the public read of exactly `releasePolicy/latest` and the admin-only,
+  shape-validated write are what a device meets today. What has not been exercised is the read
+  itself: no document exists yet, so every device gets `missing` and continues working.
 - The design reference for the update popup was not supplied, so the mandatory screen reuses the
   existing modal rather than an invented layout.
 

@@ -90,6 +90,7 @@ export const UpdateModal = ({
   const [downloadedBytes, setDownloadedBytes] = useState(0);
   const [totalBytes, setTotalBytes] = useState(0);
   const [downloadedFile, setDownloadedFile] = useState<File | null>(null);
+  const [installOutcome, setInstallOutcome] = useState('');
 
   // Tracked so the unmount/close cleanup only cancels a download that's
   // actually still in flight, not one that already finished.
@@ -146,11 +147,26 @@ export const UpdateModal = ({
   const runInstall = useCallback(async (file: File) => {
     setState('installing');
     try {
-      // Either outcome lands here in the same place: if the install
-      // actually completed, this process is almost certainly about to be
-      // replaced anyway; if it was cancelled, `downloaded` lets the user
-      // retry without re-fetching the file.
-      await updateService.installApk(file);
+      // Android's own codes. The installer reports CANCELED when the user backs out and OK when it
+      // accepted the package; anything else is the system refusing. Reading the code is the
+      // difference between "install cancelled" and a silent lie: without it a refusal, a
+      // cancellation and an accepted install all rendered the same sentence.
+      const { resultCode } = await updateService.installApk(file);
+      if (resultCode === 0) {
+        setInstallOutcome(
+          'Install was cancelled. The downloaded file is kept, so you can retry without re-downloading.',
+        );
+      } else if (resultCode === -1) {
+        setInstallOutcome(
+          'Android accepted the update. Finish the on-screen prompt to complete it.',
+        );
+      } else {
+        setErrorMessage(
+          `Android would not install this update (result code ${resultCode}).`,
+        );
+        setState('error');
+        return;
+      }
       setState('downloaded');
     } catch (err) {
       setErrorMessage(
@@ -189,6 +205,9 @@ export const UpdateModal = ({
             setDownloadProgress(Math.min(100, (bytesWritten / total) * 100));
           }
         },
+        // The policy's own byte count, so a truncated transfer is named as one
+        // instead of surfacing later as a digest mismatch on a half-file.
+        { expectedBytes: policy?.sizeBytes ?? info.assetSize ?? null },
       );
       setDownloadedFile(file);
       setState('verifying');
@@ -366,8 +385,8 @@ export const UpdateModal = ({
                 <VStack space="md">
                   <VersionSummary info={info} />
                   <Text size="xs" className="text-center text-muted-foreground">
-                    Downloaded — install was cancelled or dismissed. You can
-                    try again without re-downloading.
+                    {installOutcome ||
+                      'Downloaded — install was cancelled or dismissed. You can try again without re-downloading.'}
                   </Text>
                 </VStack>
               )}

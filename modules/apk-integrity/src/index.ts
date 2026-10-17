@@ -16,6 +16,7 @@ export interface ApkMeasurements {
 interface NativeApkIntegrity {
   inspectApk(path: string): Promise<Partial<ApkMeasurements> | null>;
   canInstallFromUnknownSources(): Promise<boolean>;
+  installedVersionCode(): Promise<number | null>;
 }
 
 // Resolved lazily: the native side only exists on Android, and touching it at module scope would
@@ -62,6 +63,25 @@ export const canInstallFromUnknownSources = async (): Promise<boolean> => {
     return await native.canInstallFromUnknownSources();
   } catch {
     return true;
+  }
+};
+
+/**
+ * The `versionCode` of the package the user is running, or null when nothing could be read.
+ *
+ * Null rather than 0: an unreadable code must leave the decision to the version names, where a
+ * fabricated 0 would make every published release look newer than the installed app.
+ */
+export const getInstalledVersionCode = async (): Promise<number | null> => {
+  const native = getNative();
+  if (!native) return null;
+  try {
+    const code = await native.installedVersionCode();
+    return typeof code === 'number' && Number.isFinite(code) && code > 0
+      ? Math.floor(code)
+      : null;
+  } catch {
+    return null;
   }
 };
 

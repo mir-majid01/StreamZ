@@ -41,6 +41,22 @@ class ApkIntegrityModule : Module() {
     AsyncFunction("canInstallFromUnknownSources") {
       canInstallFromUnknownSources()
     }
+
+    // The code of the *installed* package. Two releases can share a versionName and Android
+    // compares codes, so a gate that cannot read this one reports "up to date" about a build the
+    // installer would refuse. Null means the package manager would not say, never zero.
+    AsyncFunction("installedVersionCode") {
+      installedVersionCode()
+    }
+  }
+
+  private fun installedVersionCode(): Long? {
+    val context = appContext.reactContext ?: return null
+    return runCatching {
+      val info = context.packageManager.getPackageInfo(context.packageName, 0)
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode
+      else @Suppress("DEPRECATION") info.versionCode.toLong()
+    }.getOrNull()
   }
 
   private fun canInstallFromUnknownSources(): Boolean {

@@ -44,6 +44,9 @@ jest.mock('@/src/utils/appVersion', () => ({
 jest.mock('@/src/utils/apkIntegrity', () => ({
   apkIntegrityAvailable: jest.fn(() => true),
   inspectApk: jest.fn(),
+  // Null means "the device would not say", which leaves the version names to
+  // decide — the same posture these tests were written against.
+  getInstalledVersionCode: jest.fn(async () => null),
 }));
 
 import AsyncStorage from '@react-native-async-storage/async-storage';

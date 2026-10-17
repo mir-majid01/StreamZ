@@ -1,4 +1,4 @@
-import { compareVersions } from '@/src/utils/versions';
+import { compareVersionCodes, compareVersions, isNewerRelease } from '@/src/utils/versions';
 
 /**
  * The release policy as published in Firestore `releasePolicy/latest`.
@@ -25,6 +25,15 @@ export interface ReleasePolicy {
    * step has to state the identity and the device has to match it.
    */
   signingCertSha256: string;
+  /**
+   * Android refuses to install a build whose `versionCode` is lower than the one
+   * already on the device, and two releases can share a `versionName`. Both are
+   * optional because a policy published before sub-name releases existed carries
+   * neither — and so does one read back from a cache written by an older build —
+   * which must keep working rather than become "unknown".
+   */
+  latestVersionCode?: number | null;
+  minimumSupportedVersionCode?: number | null;
 }
 
 export type PolicyOutcome =
@@ -115,6 +124,16 @@ export const parseReleasePolicy = (
   // A minimum above the latest version is a publishing mistake that would
   // brick the app for everyone, so it is treated as no policy at all.
   if (compareVersions(latestVersion, minimumSupportedVersion) < 0) return null;
+  const latestVersionCode = asPositiveInt(raw.latestVersionCode);
+  const minimumSupportedVersionCode = asPositiveInt(raw.minimumSupportedVersionCode);
+  // Same mistake, one dimension down: equal names with a minimum code above the
+  // latest code locks every device out of an installable upgrade.
+  if (
+    latestVersion === minimumSupportedVersion &&
+    compareVersionCodes(minimumSupportedVersionCode, latestVersionCode) > 0
+  ) {
+    return null;
+  }
 
   return {
     minimumSupportedVersion,
@@ -125,6 +144,8 @@ export const parseReleasePolicy = (
     sha256,
     sizeBytes: asPositiveInt(raw.apkSizeBytes),
     signingCertSha256,
+    latestVersionCode,
+    minimumSupportedVersionCode,
   };
 };
 
@@ -165,13 +186,15 @@ export const isReleasePolicy = (value: unknown): value is ReleasePolicy => {
  */
 export const decideUpdate = (input: {
   installedVersion: string;
+  installedVersionCode?: number | null;
   outcome: PolicyOutcome;
   policy: ReleasePolicy | null;
   cached: { policy: ReleasePolicy; fetchedAtMs: number } | null;
   nowMs: number;
   graceMs: number;
 }): UpdateDecision => {
-  const { installedVersion, outcome, policy, cached, nowMs, graceMs } = input;
+  const { installedVersion, installedVersionCode, outcome, policy, cached, nowMs, graceMs } =
+    input;
 
   const usable =
     outcome === 'ok' && policy
@@ -193,12 +216,26 @@ export const decideUpdate = (input: {
   }
 
   const { p, fromCache } = usable;
-  const verdict: UpdateVerdict =
-    compareVersions(installedVersion, p.minimumSupportedVersion) < 0
-      ? 'mandatory'
-      : compareVersions(installedVersion, p.latestVersion) < 0
-        ? 'optional'
-        : 'upToDate';
+  // A policy cached by an older build has no code fields, and `undefined` must
+  // not become a comparison — treat it as "the publisher did not say", which
+  // leaves the version names deciding, exactly as it did before codes existed.
+  const codeOf = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : null;
+  const installed = {
+    version: installedVersion,
+    code: codeOf(installedVersionCode ?? null),
+  };
+  const verdict: UpdateVerdict = isNewerRelease(installed, {
+    version: p.minimumSupportedVersion,
+    code: codeOf(p.minimumSupportedVersionCode),
+  })
+    ? 'mandatory'
+    : isNewerRelease(installed, {
+        version: p.latestVersion,
+        code: codeOf(p.latestVersionCode),
+      })
+      ? 'optional'
+      : 'upToDate';
 
   return {
     verdict,
