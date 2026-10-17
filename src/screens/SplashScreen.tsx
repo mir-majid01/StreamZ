@@ -18,9 +18,14 @@ import { useSession } from '@/src/firebase/auth/SessionProvider';
 import { evaluateReleasePolicy } from '@/src/firebase/release/policy';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 import { mark } from '@/src/utils/startupTiming';
-import { getAppVersion } from '@/src/utils/appVersion';
+import { installedReleaseVersion } from '@/src/utils/appVersion';
 import type { UpdateInfo } from '@/src/services/UpdateService';
-import type { ReleasePolicy, UpdateDecision } from '@/src/utils/releasePolicy';
+import {
+  policyUpdateInfo,
+  type ReleasePolicy,
+  type UpdateDecision,
+  type UpdateVerdict,
+} from '@/src/utils/releasePolicy';
 import {
   clearSkippedVersion,
   isSkippedVersion,
@@ -46,20 +51,11 @@ const checkPolicySafe = async (): Promise<UpdateDecision | null> => {
 /**
  * The modal renders `UpdateInfo`; the policy is the authoritative source, so the
  * view fields are derived from it rather than fetched a second time from GitHub.
- * `releaseUrl` is left empty on purpose — a policy publishes a download, not a
- * web page, and the UI must not offer a link it does not have.
+ * `installedVersion` is read through the same helper the gate compared against,
+ * so the version shown and the version decided on cannot disagree.
  */
-const infoFromPolicy = (policy: ReleasePolicy): UpdateInfo => ({
-  hasUpdate: true,
-  currentVersion: getAppVersion(),
-  latestVersion: policy.latestVersion,
-  releaseNotes: policy.releaseNotes,
-  releaseName: `Version ${policy.latestVersion}`,
-  releaseDate: policy.publishedAt ?? '',
-  downloadUrl: policy.downloadUrl,
-  releaseUrl: '',
-  assetSize: policy.sizeBytes,
-});
+const infoFromPolicy = (policy: ReleasePolicy, verdict: UpdateVerdict): UpdateInfo =>
+  policyUpdateInfo(policy, verdict, installedReleaseVersion());
 
 export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => {
   const { width: windowWidth } = useWindowDimensions();
@@ -197,7 +193,7 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         if (!skipped) {
           if (skippable) await clearSkippedVersion();
           if (cancelled) return;
-          setUpdateInfo(infoFromPolicy(policy));
+          setUpdateInfo(infoFromPolicy(policy, decision.verdict));
           setUpdatePolicy(policy);
           setUpdateMandatory(decision.blocks);
           setUpdaterOpen(true);

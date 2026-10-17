@@ -21,3 +21,12 @@ export const getInstalledAppVersion = (): string =>
   Application.nativeApplicationVersion ??
   Constants.expoConfig?.version ??
   '0.0.0';
+
+/**
+ * The version an update decision is about. One function because the gate, the modal that shows
+ * the result, and the Settings row that reports it all have to name the same number: the previous
+ * code compared the installed binary in one place and displayed `APP_VERSION` from the JS config
+ * in another, so a build could be told it was up to date against a version it was not running.
+ */
+export const installedReleaseVersion = (): string =>
+  getInstalledAppVersion() || getAppVersion();

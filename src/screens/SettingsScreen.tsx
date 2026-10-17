@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Children, Fragment } from 'react';
 import {
   Image,
@@ -62,13 +62,21 @@ import { getAspectLabel, useVideoAspect } from '@/src/hooks/useVideoAspect';
 import { getLanguageLabel } from '@/src/constants/languages';
 import { getRegionName, useCatalogRegion } from '@/src/hooks/useCatalogRegion';
 import { UpdateModal } from '@/src/components/UpdateModal';
-import { updateService } from '@/src/services/UpdateService';
+import { updateService, type UpdateInfo } from '@/src/services/UpdateService';
+import { evaluateReleasePolicy } from '@/src/firebase/release/policy';
+import {
+  describeManualUpdateCheck,
+  policyUpdateInfo,
+  type ReleasePolicy,
+  type UpdateDecision,
+} from '@/src/utils/releasePolicy';
 import { useFinishedMovies } from '@/src/hooks/useFinishedMovies';
 import { useMyList } from '@/src/hooks/useMyList';
 import { useDownloads } from '@/src/hooks/useDownloads';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 import { signOut } from '@/src/firebase/auth/googleAuth';
-import { type AccessStatus } from '@/src/firebase/models';
+import { keyOutcomeOfAccess, keyOutcomeStatus } from '@/src/firebase/subscriptions/keyOutcome';
+import { installedReleaseVersion } from '@/src/utils/appVersion';
 import { expiryLabel, timeLeftLabel } from '@/src/utils/subscriptionTerms';
 import { loadActivationKey, maskKey } from '@/src/firebase/subscriptions/savedKey';
 import { usePlaybackSettings } from '@/src/hooks/usePlaybackSettings';
@@ -114,6 +122,41 @@ export const SettingsScreen = () => {
   const { region } = useCatalogRegion();
   const regionName = getRegionName(region);
   const [updaterOpen, setUpdaterOpen] = useState(false);
+  /**
+   * The manual check reads the same release policy the boot gate reads and hands it to the modal,
+   * because the modal only offers the verified in-app install when it has a digest to check
+   * against. Opening it with no policy left that path permanently unavailable and let the GitHub
+   * release list answer for a release the policy never named. `updateRow` is what the row says
+   * after the check, so the screen never reports a guess as a verdict.
+   */
+  const [updateRow, setUpdateRow] = useState<string | null>(null);
+  const [updatePolicy, setUpdatePolicy] = useState<ReleasePolicy | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const checkingUpdateRef = useRef(false);
+  const runUpdateCheck = useCallback(async () => {
+    if (checkingUpdateRef.current) return;
+    checkingUpdateRef.current = true;
+    setUpdateRow('Checking…');
+    let decision: UpdateDecision | null = null;
+    try {
+      decision = await evaluateReleasePolicy();
+    } catch {
+      decision = null;
+    } finally {
+      checkingUpdateRef.current = false;
+    }
+    const policy = decision?.policy ?? null;
+    if (decision && policy && (decision.verdict === 'optional' || decision.verdict === 'mandatory')) {
+      setUpdatePolicy(policy);
+      setUpdateInfo(policyUpdateInfo(policy, decision.verdict, installedReleaseVersion()));
+      setUpdateRow(describeManualUpdateCheck(decision));
+      setUpdaterOpen(true);
+      return;
+    }
+    setUpdatePolicy(null);
+    setUpdateInfo(null);
+    setUpdateRow(describeManualUpdateCheck(decision));
+  }, []);
   const toast = useToast();
   const [signOutPrompt, setSignOutPrompt] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
@@ -158,27 +201,25 @@ export const SettingsScreen = () => {
   // string. `quiet` is any state that is not currently granted; `none` is the
   // gap before the first verdict arrives — a blinking green dot there would
   // claim an authorization the server has not confirmed.
+  //
+  // The words themselves are not this screen's to choose: they come from the same mapping the
+  // activation panel uses, so "suspended" here cannot quietly mean something else there. The
+  // mapping also names *which* document expired, because the key and the account do it
+  // independently and the old copy called both of them "Expired".
+  const outcome = keyOutcomeOfAccess(access);
   const status: { line: string; dot: 'live' | 'quiet' | 'none' } = (() => {
-    if (!access) return { line: 'Checking subscription…', dot: 'none' };
+    const label = keyOutcomeStatus(outcome);
+    if (!access) return { line: label, dot: 'none' };
     if (access.status === 'authorized') {
-      return {
-        line: timeLeft != null ? `Subscription active · ${timeLeft}` : 'Subscription active',
-        dot: 'live',
-      };
+      return { line: timeLeft != null ? `${label} · ${timeLeft}` : label, dot: 'live' };
     }
-    const words: Record<AccessStatus, string> = {
-      authorized: 'Subscription active',
-      needsKey: 'No key activated on this account',
-      expired: endsLabel ? `Expired · ${endsLabel}` : 'Expired',
-      revoked: 'Key revoked by the issuer',
-      suspended: 'Key suspended',
-      disabled: 'Key disabled',
-      installationCeiling: 'Key limit reached on this installation',
-      error: 'Subscription status unavailable',
-    };
-    return { line: words[access.status] ?? 'Subscription unavailable', dot: 'quiet' };
+    return { line: label, dot: 'quiet' };
   })();
-  const finePrint = [user?.email, expiresAt != null ? `Ends ${endsLabel}` : null]
+  // "Ends <date>" is only a true statement about a term that has not ended. Once the expiry is
+  // behind us the status line above already says when it passed, and a second line calling a
+  // past date "Ends" reads like the term is still running.
+  const stillRunning = remainingMs != null && remainingMs > 0;
+  const finePrint = [user?.email, expiresAt != null && stillRunning ? `Ends ${endsLabel}` : null]
     .filter(Boolean)
     .join(' · ');
 
@@ -421,8 +462,10 @@ export const SettingsScreen = () => {
             <Row
               icon={Download}
               title="Check for updates"
-              value={`Current version: v${updateService.getCurrentVersion()}`}
-              onPress={() => setUpdaterOpen(true)}
+              value={
+                updateRow ?? `Current version: v${installedReleaseVersion()}`
+              }
+              onPress={() => void runUpdateCheck()}
             />
           ) : null}
           <Row
@@ -452,7 +495,12 @@ export const SettingsScreen = () => {
       </ScrollView>
 
       {UPDATE_CONFIG.enabled ? (
-        <UpdateModal visible={updaterOpen} onClose={() => setUpdaterOpen(false)} />
+        <UpdateModal
+          visible={updaterOpen}
+          onClose={() => setUpdaterOpen(false)}
+          initialUpdateInfo={updateInfo}
+          policy={updatePolicy}
+        />
       ) : null}
 
       <ConfirmDialog

@@ -91,18 +91,27 @@ const EMPTY_INFO = (): UpdateInfo => {
 };
 
 /**
- * Find the "best" APK asset in a release: prefer release/universal builds,
- * fall back to any `.apk`.
+ * Pick the APK a release intends for this app, or nothing.
+ *
+ * The previous rule was `endsWith('.apk') && (includes('release') ||
+ * includes('universal') || !includes('debug'))`, and that last `||` clause is true
+ * for every filename that is not literally called something-debug — so in practice
+ * this returned the first APK attached to the release. Choosing an arbitrary
+ * artifact by position is exactly the thing this pipeline exists to prevent: the
+ * browser_download_url it produces is then hashed and compared against a published
+ * digest, and a wrong-but-installed APK is the failure mode a checksum cannot catch.
+ *
+ * So the name has to say what it is. A release with no asset matching the shapes
+ * this project publishes yields `null`, which the caller reports as "no update
+ * available" rather than guessing.
  */
-const findApkAsset = (assets: ReleaseAsset[]): ReleaseAsset | null => {
-  const preferred = assets.find(
-    (a) =>
-      a.name.endsWith('.apk') &&
-      (a.name.includes('release') ||
-        a.name.includes('universal') ||
-        !a.name.includes('debug')),
-  );
-  return preferred ?? assets.find((a) => a.name.endsWith('.apk')) ?? null;
+export const findApkAsset = (assets: ReleaseAsset[]): ReleaseAsset | null => {
+  const candidates = assets
+    .filter((a) => a.name.toLowerCase().endsWith('.apk'))
+    .filter((a) => !a.name.toLowerCase().includes('debug'))
+    .filter((a) => /(^|[-_.])(release|universal|app-release)([-_.]|$)/i.test(a.name))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return candidates[0] ?? null;
 };
 
 // Fixed filename in the cache directory so a stale copy from a previous

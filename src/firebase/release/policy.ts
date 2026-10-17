@@ -7,7 +7,7 @@ import {
 import { ensureFirebase } from '@/src/firebase/init';
 import { BRAND } from '@/src/config/brand';
 import { UPDATE_CONFIG } from '@/src/config/env';
-import { getAppVersion, getInstalledAppVersion } from '@/src/utils/appVersion';
+import { installedReleaseVersion } from '@/src/utils/appVersion';
 import { apkIntegrityAvailable, getInstalledVersionCode, inspectApk } from '@/src/utils/apkIntegrity';
 import {
   decideUpdate,
@@ -137,7 +137,7 @@ export const evaluateReleasePolicy = async (): Promise<UpdateDecision> => {
     loadCachedPolicy(),
     getInstalledVersionCode(),
   ]);
-  const installedVersion = getInstalledAppVersion() || getAppVersion();
+  const installedVersion = installedReleaseVersion();
 
   if (outcome === 'ok' && policy) {
     const fetchedAtMs = Date.now();

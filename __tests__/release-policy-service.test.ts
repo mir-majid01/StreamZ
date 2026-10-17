@@ -36,10 +36,17 @@ jest.mock('@react-native-async-storage/async-storage', () => {
   };
 });
 
-jest.mock('@/src/utils/appVersion', () => ({
-  getAppVersion: jest.fn(() => '0.1.0'),
-  getInstalledAppVersion: jest.fn(() => '0.1.0'),
-}));
+jest.mock('@/src/utils/appVersion', () => {
+  const getAppVersion = jest.fn(() => '0.1.0');
+  const getInstalledAppVersion = jest.fn(() => '0.1.0');
+  return {
+    getAppVersion,
+    getInstalledAppVersion,
+    // Composed the way the real module composes it, so a test that reprograms either part is
+    // still testing the number the gate actually compares.
+    installedReleaseVersion: jest.fn(() => getInstalledAppVersion() || getAppVersion()),
+  };
+});
 
 jest.mock('@/src/utils/apkIntegrity', () => ({
   apkIntegrityAvailable: jest.fn(() => true),

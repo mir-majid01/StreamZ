@@ -1,4 +1,6 @@
 import { compareVersionCodes, compareVersions, isNewerRelease } from '@/src/utils/versions';
+// Type-only: `UpdateService` is a runtime module this one must not pull in.
+import type { UpdateInfo } from '@/src/services/UpdateService';
 
 /**
  * The release policy as published in Firestore `releasePolicy/latest`.
@@ -47,6 +49,23 @@ export type PolicyOutcome =
   | 'unreachable'
   /** Read succeeded but required fields were absent or malformed. */
   | 'malformed';
+
+/**
+ * What each outcome is, said in the user's language. A manual "check for updates" has to answer
+ * the same five states the boot gate silently swallows, and the four non-`ok` ones must never be
+ * rendered as "you are up to date" — not knowing the release state is a different fact from being
+ * current, exactly as `unknown` is a different verdict from `upToDate`.
+ */
+export const POLICY_OUTCOME_LABEL: Record<PolicyOutcome, string> = {
+  ok: 'The published release was read.',
+  missing: 'No release has been published to check against yet.',
+  forbidden: "The published release could not be read: this device isn't allowed to see it.",
+  unreachable: 'The release service could not be reached. Check your connection and try again.',
+  malformed: 'The published release metadata is not readable, so nothing could be decided.',
+};
+
+export const policyOutcomeLabel = (outcome: PolicyOutcome): string =>
+  POLICY_OUTCOME_LABEL[outcome];
 
 export type UpdateVerdict =
   | 'upToDate'
@@ -308,4 +327,55 @@ export const evaluateApkIntegrity = (input: {
   }
 
   return { allowed: true, reason: 'ok' };
+};
+
+/**
+ * The update the modal shows, taken from the policy instead of from a second, independent release
+ * lookup. Two sources of truth is how the boot gate could compare version codes against Firestore
+ * while the screen beside it displayed a GitHub tag — the file that gets downloaded is named by
+ * whichever one the download used, so both surfaces read the same document.
+ *
+ * `releaseUrl` is deliberately empty: a policy publishes a download, not a web page, and the UI
+ * must not offer a link it does not have.
+ */
+export const policyUpdateInfo = (
+  policy: ReleasePolicy,
+  verdict: UpdateVerdict,
+  installedVersion: string,
+): UpdateInfo => ({
+  hasUpdate: verdict === 'mandatory' || verdict === 'optional',
+  currentVersion: installedVersion,
+  latestVersion: policy.latestVersion,
+  releaseNotes: policy.releaseNotes,
+  releaseName: `Version ${policy.latestVersion}`,
+  releaseDate: policy.publishedAt ?? '',
+  downloadUrl: policy.downloadUrl,
+  releaseUrl: '',
+  assetSize: policy.sizeBytes,
+});
+
+/**
+ * What a manual "check for updates" reports when it is not opening the modal.
+ *
+ * `unknown` is the verdict `decideUpdate` reaches without a usable policy, and it has to be said
+ * as the reason it is unknown: a Firestore outage, a refused read, an absent document and a
+ * malformed document are four different facts, and none of them is "you are up to date". This is
+ * the same rule the boot gate follows silently, put into words on the screen that promises an
+ * answer. A check that threw has no decision at all, which is reported as no answer too.
+ */
+export const describeManualUpdateCheck = (
+  decision: UpdateDecision | null,
+  latestVersion?: string | null,
+): string => {
+  if (!decision) return policyOutcomeLabel('unreachable');
+  if (decision.verdict === 'upToDate') {
+    const version = decision.policy?.latestVersion ?? latestVersion ?? null;
+    return version
+      ? `You're on the newest published release (v${version}).`
+      : "You're on the newest published release.";
+  }
+  if (decision.verdict === 'optional' || decision.verdict === 'mandatory') {
+    return 'An update is available.';
+  }
+  return policyOutcomeLabel(decision.outcome);
 };
