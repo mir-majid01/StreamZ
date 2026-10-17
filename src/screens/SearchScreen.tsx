@@ -1,6 +1,13 @@
-import { useEffect, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentRef,
+  type Ref,
+} from 'react';
 import { FlatList, useWindowDimensions } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, Search as SearchIcon } from 'lucide-react-native';
@@ -17,6 +24,7 @@ import { Focusable } from '@/src/components/Focusable';
 import { TMDBService } from '@/src/services/TMDBService';
 import { useDebounce } from '@/src/hooks/useDebounce';
 import { useDeviceKind } from '@/src/hooks/useDeviceKind';
+import { releaseFieldFocusRef, type FieldHandle } from '@/src/utils/fieldFocus';
 import {
   getGridColumns,
   getHorizontalPadding,
@@ -50,6 +58,31 @@ export const SearchScreen = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const debouncedQuery = useDebounce(query, 300);
+
+  /**
+   * The search field is the only text input on the path that opens a movie, and
+   * Android keeps it as the keyboard's target after this screen is covered:
+   * react-native-screens deliberately does not clear focus while a transitioned
+   * screen is invisible, so the IME can surface over Detail (and over the
+   * Player, which rotates the window) with nothing tapped. Releasing the field as
+   * this screen loses focus — and before pushing Detail — is what stops that.
+   * See `src/utils/fieldFocus.ts`.
+   */
+  const fieldRef = useRef<FieldHandle | null>(null);
+  const leaveWithFieldReleased = useCallback(() => {
+    releaseFieldFocusRef(fieldRef);
+  }, []);
+  useFocusEffect(
+    useCallback(() => leaveWithFieldReleased, [leaveWithFieldReleased]),
+  );
+
+  const openDetail = useCallback(
+    (item: MediaItem) => {
+      leaveWithFieldReleased();
+      navigation.navigate('Detail', { item });
+    },
+    [leaveWithFieldReleased, navigation],
+  );
 
   // Load trending movies + TV once for the empty-query state.
   useEffect(() => {
@@ -138,6 +171,10 @@ export const SearchScreen = () => {
               <InputIcon as={SearchIcon} />
             </InputSlot>
             <InputField
+              // gluestack types this ref as the component's props bag but
+              // forwards it to the React Native `TextInput`, which is the object
+              // that owns `blur`/`isFocused` — hence the cast to what is read back.
+              ref={fieldRef as unknown as Ref<ComponentRef<typeof InputField>>}
               placeholder="Search movies & TV shows"
               value={query}
               onChangeText={setQuery}
@@ -182,7 +219,7 @@ export const SearchScreen = () => {
             <ContentCard
               item={item}
               width={cardWidth}
-              onPress={(i) => navigation.navigate('Detail', { item: i })}
+              onPress={openDetail}
             />
           )}
           ListEmptyComponent={

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentRef, type Ref } from 'react';
 import { FlatList, RefreshControl, ScrollView } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Radio, Search as SearchIcon, Star } from 'lucide-react-native';
@@ -18,6 +18,7 @@ import { Focusable } from '@/src/components/Focusable';
 import { useDeviceKind } from '@/src/hooks/useDeviceKind';
 import { getHorizontalPadding } from '@/src/utils/responsive';
 import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
+import { releaseFieldFocusRef, type FieldHandle } from '@/src/utils/fieldFocus';
 import {
   DaddyLiveService,
   formatEventTime,
@@ -82,6 +83,21 @@ export const LiveTvScreen = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+
+  /**
+   * The same IME hazard the search screen had, on the same path shape: this field stays the
+   * keyboard's target while the live player is pushed over it and rotates the window, because
+   * react-native-screens deliberately does not clear focus from an invisible screen. Releasing it
+   * when this screen loses focus and before opening a channel is what keeps a typed filter from
+   * raising a keyboard nobody tapped for. See `src/utils/fieldFocus.ts`.
+   */
+  const fieldRef = useRef<FieldHandle | null>(null);
+  const releaseField = useCallback(() => {
+    releaseFieldFocusRef(fieldRef);
+  }, []);
+  useFocusEffect(
+    useCallback(() => releaseField, [releaseField]),
+  );
 
   const load = useCallback(async (refresh = false) => {
     try {
@@ -159,6 +175,9 @@ export const LiveTvScreen = () => {
   const playChannel = useCallback(
     async (channel: LiveChannel) => {
       if (resolvingId) return;
+      // Before the await: the tap that started this is the last thing that should leave the
+      // keyboard up while a stream is being resolved.
+      releaseField();
       setResolvingId(channel.id);
       setError(null);
       try {
@@ -175,7 +194,7 @@ export const LiveTvScreen = () => {
         setResolvingId(null);
       }
     },
-    [navigation, resolvingId],
+    [navigation, releaseField, resolvingId],
   );
 
   const openChannel = useCallback(
@@ -288,6 +307,9 @@ export const LiveTvScreen = () => {
               <InputIcon as={SearchIcon} className="text-muted-foreground" />
             </InputSlot>
             <InputField
+              // gluestack types this ref as the component's props bag but forwards it to the
+              // React Native `TextInput`, which owns `blur`/`isFocused` — hence the cast.
+              ref={fieldRef as unknown as Ref<ComponentRef<typeof InputField>>}
               placeholder={
                 mode === 'channels'
                   ? 'Search channels or events'
