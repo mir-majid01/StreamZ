@@ -103,6 +103,28 @@ Any measurement that came back null is a refusal (`not_measured`), including the
 native inspection did not run at all. There is no path where a missing check is treated as a passed
 check.
 
+## Where an update is checked from
+
+One document. Both entry points read `releasePolicy/latest` through `evaluateReleasePolicy()`, and
+the version they compare is `installedReleaseVersion()` (`src/utils/appVersion.ts`) — the installed
+binary, which is the number Android itself will use:
+
+- **Boot** (`SplashScreen`): silent, holds the door only on a `mandatory` verdict, and opens the
+  modal with the policy it just read.
+- **Settings → Check for updates**: the same call, reported out loud. An `unknown` verdict is
+  printed as the outcome that caused it (`missing`, `forbidden`, `unreachable`, `malformed`), never
+  as "you are up to date" — see `describeManualUpdateCheck`. The modal is opened only for
+  `optional`/`mandatory`, and only with the policy, because the verified in-app install is
+  deliberately unavailable without one to check against (`canDownload` requires a policy).
+
+`UpdateService.checkForUpdates()` (the GitHub Releases API) is no longer on either path. It remains
+in the codebase for the unmounted `UpdateChecker` component, and its asset picker is hardened
+regardless: `findApkAsset` requires `.apk`, rejects `debug`, demands a `release`/`universal`/
+`app-release` **segment** rather than a substring of the name, sorts by name for determinism, and
+returns `null` rather than falling back to "some APK in this release". Downloading and installing an
+arbitrary file because it was attached to the wrong tag is the failure that a digest check against a
+publisher-written policy exists to prevent, so the picker is not allowed to guess either.
+
 ## Publishing procedure
 
 1. Bump `APP_VERSION` and `ANDROID_VERSION_CODE` (the code must increase; Android refuses a
@@ -156,6 +178,17 @@ These are blockers, not caveats to write around:
   unproven is the runtime behaviour: whether `inspectApk` returns a real digest, package name and
   signer fingerprint on a physical device. Until that is verified, integrity checks are assumed to
   return `not_measured` and installation is refused.
+- **The `installedVersionCode` read is new and unproven.** It is a second function on the same
+  native module added so the gate can compare Android's own integer (`PackageInfo.longVersionCode`
+  on API 28+, `versionCode` below) instead of a version *name* that two builds can share. It returns
+  `null`, never `0`, when the package manager cannot answer, and `decideUpdate` then falls back to
+  names. Like `inspectApk`, it has been compiled but never called on a device.
+- **Nothing in this pipeline has been run end to end on a device.** Not the download, not the
+  retry (a failed transfer is retried at most twice into a fresh destination, the partial file is
+  deleted, a reported-size mismatch is refused, and a user's cancel is not retried), not the three
+  integrity checks, not the installer hand-off, and not a mandatory gate holding the splash open.
+  Each is unit-tested at the seam and blocked behind `FEATURES.updateChecker = false` until that run
+  happens.
 - **The `releasePolicy` rules are live.** The block was written on 2026-10-13 and reached production
   with the whole-file rules release of 2026-10-16 (`firestore: released rules firestore.rules to
   cloud.firestore`), so the public read of exactly `releasePolicy/latest` and the admin-only,
