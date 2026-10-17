@@ -198,6 +198,27 @@ export const ICON_SIZE = {
   hero: 28,
 } as const;
 
+/**
+ * The Home header row. Raw numbers because these are measurements React Native
+ * has to take, not classes Tailwind can reach.
+ *
+ * `actionTarget` is the touch-target floor the brief sets (44dp; Android's own
+ * guidance is 48dp) and `rowHeight` gives the row enough height for the
+ * wordmark, the version label and the action to share one centred line instead
+ * of each sitting on a hand-tuned padding. `logoSize` is unchanged from the
+ * previous header — this is the alignment fix, not a new brand size.
+ */
+export const HEADER = {
+  rowHeight: 56,
+  actionTarget: 44,
+  logoSize: 19,
+  /** Wordmark → version label gap: one step off the spacing scale. */
+  lockupGap: SPACE.md,
+  /** Scroll-driven settle: oversized over the hero, reading size once backed. */
+  logoScaleOverHero: 1.3,
+  logoScaleSettled: 1,
+} as const;
+
 // ── Motion language (§29-§30) ──────────────────────────────────────────────
 export const MOTION = {
   /** Micro feedback: press scale, icon ticks. */

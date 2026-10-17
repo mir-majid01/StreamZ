@@ -13,6 +13,8 @@ interface FocusableProps {
   hasTVPreferredFocus?: boolean;
   /** Expands the touch/press target without affecting layout. */
   hitSlop?: Insets | number;
+  /** Accessible name for icon-only controls; forwarded to the host `Pressable`. */
+  accessibilityLabel?: string;
   /** Escape hatch for layout that can't be expressed via className (e.g. dynamic safe-area offsets). */
   style?: StyleProp<ViewStyle>;
   /** Fires whenever this element gains/loses TV focus. Useful for parents that need to react (e.g. a collapsible rail expanding while one of its rows is focused). */
@@ -35,6 +37,7 @@ export const Focusable = forwardRef<
     focusedClassName,
     hasTVPreferredFocus,
     hitSlop,
+    accessibilityLabel,
     style,
     onFocusChange,
   },
@@ -48,6 +51,7 @@ export const Focusable = forwardRef<
       focusable
       hasTVPreferredFocus={hasTVPreferredFocus}
       hitSlop={hitSlop}
+      accessibilityLabel={accessibilityLabel}
       style={style}
       onPress={onPress}
       onLongPress={onLongPress}

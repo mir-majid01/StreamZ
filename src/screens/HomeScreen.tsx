@@ -18,7 +18,7 @@ import { Icon } from '@/components/ui/icon';
 import { VStack } from '@/components/ui/vstack';
 import { Search as SearchIcon } from 'lucide-react-native';
 import { Focusable } from '@/src/components/Focusable';
-import { AppHeader } from '@/src/components/AppHeader';
+import { AppHeader, HEADER_ACTION_SIZE } from '@/src/components/AppHeader';
 import { HeroCarousel } from '@/src/components/HeroCarousel';
 import { ContentRow } from '@/src/components/ContentRow';
 import { CatalogRow } from '@/src/components/CatalogRow';
@@ -33,6 +33,8 @@ import { useDeviceKind } from '@/src/hooks/useDeviceKind';
 import { getReleaseDate, getTitle, type MediaItem } from '@/src/types';
 import { getComingSoon } from '@/src/utils/comingSoon';
 import { mark } from '@/src/utils/startupTiming';
+import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
+import { SPACE } from '@/src/theme/tokens';
 import type { RootStackParamList } from '@/src/navigation/types';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
@@ -321,14 +323,24 @@ export const HomeScreen = ({ sidebarRef }: HomeScreenProps = {}) => {
 
       <Box className="absolute left-0 right-0 top-0" pointerEvents="box-none">
         <AppHeader
-          paddingHorizontal={16}
+          paddingHorizontal={SPACE.lg}
           progress={headerProgress}
           topInset={insets.top}
           right={
+            // A control, not a loose glyph: the hero's own scrim starts at
+            // `transparent` at its top edge, so the header strip gets no
+            // contrast from the artwork behind it. The action carries an opaque
+            // brand surface and a hairline border instead, at the header's
+            // minimum touch size.
             <Focusable
               onPress={() => navigation.navigate('Search')}
-              hitSlop={12}
-              className="rounded-full p-1"
+              accessibilityLabel="Search"
+              className="items-center justify-center rounded-full border border-border bg-card"
+              focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+              style={{
+                width: HEADER_ACTION_SIZE,
+                height: HEADER_ACTION_SIZE,
+              }}
             >
               <Icon as={SearchIcon} size="xl" className="text-foreground" />
             </Focusable>
