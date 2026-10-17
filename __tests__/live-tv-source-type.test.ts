@@ -6,6 +6,7 @@
  * sniffs the response, so those entries failed as a malformed playlist rather than playing.
  */
 import { liveSourceType } from '@/src/services/liveTv/sourceType';
+import type { StreamProbeResult } from '@/src/services/liveTv/streamProbe';
 
 describe('liveSourceType', () => {
   it('marks the dominant case, HLS with and without an extension', () => {
@@ -61,5 +62,65 @@ describe('liveSourceType', () => {
     for (const url of samples) {
       expect(['m3u8', 'mpd', undefined]).toContain(liveSourceType(url));
     }
+  });
+});
+
+/**
+ * Why the extensionless default stays `m3u8`, and why a probe is allowed to overrule it.
+ *
+ * `ReactExoplayerView.buildMediaSource` (react-native-video 6.19.2, line 1007) decides the source
+ * with `Util.inferContentType(overrideExtension ? "." + overrideExtension :
+ * uri.getLastPathSegment())`, and media3 1.11.1's `inferContentTypeForExtension` matches exactly
+ * four strings — `mpd`, `m3u8`, `ism`, `isml` — with anything else coming back as
+ * `CONTENT_TYPE_OTHER`, which this library builds as a `ProgressiveMediaSource`. So passing no
+ * hint for an extensionless URL is not "let ExoPlayer infer": it is a container reader that cannot
+ * parse an HLS playlist, guaranteeing a parse error for the majority of the catalogue. The native
+ * layer has no channel for the server's `Content-Type`, which leaves the app one way to know
+ * better than the filename — and that is what the retry-path probe is for.
+ */
+describe('liveSourceType with a probe', () => {
+  const answered = (
+    contentType: string | null,
+  ): StreamProbeResult => ({
+    observation: 'answered',
+    host: 'd.example',
+    ms: 40,
+    status: 200,
+    contentType,
+    method: 'HEAD',
+    detail: 'HTTP 200',
+  });
+
+  it('takes the container from the server when the server says', () => {
+    // The 524 extensionless entries: the heuristic guessed HLS, and here it is confirmed.
+    expect(
+      liveSourceType('https://d.example/real/CH_NEWS', answered('application/vnd.apple.mpegurl')),
+    ).toBe('m3u8');
+    // A server that answers DASH at an extensionless path now gets a DASH source.
+    expect(
+      liveSourceType('https://d.example/manifest', answered('application/dash+xml')),
+    ).toBe('mpd');
+    // And a progressive file behind a URL that looks like a playlist stops being sent to the HLS
+    // parser — the exact bug 915870c fixed, now caught by observation instead of by filename.
+    expect(liveSourceType('https://d.example/edge/feed', answered('video/mp2t'))).toBeUndefined();
+  });
+
+  it('falls back to the extension heuristic when the probe saw nothing about format', () => {
+    // octet-stream is what many IPTV CDNs answer for HLS; reading it as a container claim would be
+    // a worse guess than the one the catalogue supports.
+    expect(liveSourceType('https://d.example/real/CH_NEWS', answered('application/octet-stream'))).toBe('m3u8');
+    expect(liveSourceType('https://d.example/real/CH_NEWS', answered(null))).toBe('m3u8');
+    expect(liveSourceType('https://d.example/a/index.m3u8', answered('text/html'))).toBe('m3u8');
+    // A probe that never reached the server is not evidence about anything.
+    expect(
+      liveSourceType('https://d.example/real/CH_NEWS', {
+        observation: 'host-did-not-resolve',
+        host: 'd.example',
+        ms: 3,
+        method: 'HEAD',
+        detail: 'unknownhostexception',
+      }),
+    ).toBe('m3u8');
+    expect(liveSourceType('https://d.example/a/clip.mp4', null)).toBeUndefined();
   });
 });
