@@ -99,11 +99,15 @@ const sessionDoc = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeAll(async () => {
+  // `firebase emulators:exec` exports the address it actually bound. Honouring it means the
+  // suite runs unchanged under CI's default and against an emulator moved off a busy port;
+  // hardcoding 8080 made an unrelated process holding that port look like a rules failure.
+  const [host, port] = (process.env.FIRESTORE_EMULATOR_HOST ?? '127.0.0.1:8080').split(':');
   env = await initializeTestEnvironment({
     projectId: PROJECT_ID,
     firestore: {
-      host: '127.0.0.1',
-      port: 8080,
+      host,
+      port: Number(port),
       rules: fs.readFileSync(path.resolve(__dirname, '../../firestore.rules'), 'utf8'),
     },
   });
