@@ -1,108 +1,134 @@
 /**
- * Generates the StreamZ launcher icon set (PRD §10) from the same geometric Z
- * the in-app logo draws, so the icon and the wordmark never drift apart.
+ * Generates the StreamZ launcher icon set (PRD §10) from `zMarkGeometry.ts` —
+ * the exact numbers `src/components/streamz/StreamZLogo.tsx` draws, which is the
+ * logo the splash animates. No mark is redrawn here; the launcher art is the
+ * splash artwork rasterised, which is the point (owner item 9).
+ *
  * Run: node scripts/generate-brand-assets.mjs
- * Outputs into assets/applogo/ (paths referenced by app.json).
+ *
+ * Writes:
+ *   - assets/applogo/*.png            (paths referenced by app.json)
+ *   - assets/applogo/*.svg            (the SVG each layer was rasterised from,
+ *                                      so a test can diff the shipped icon
+ *                                      against the shared geometry)
+ *   - android/app/src/main/res/mipmap-<dpi>/  (the committed bare-android set)
  */
 import sharp from 'sharp';
 import path from 'path';
+import { mkdirSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
+import {
+  ADAPTIVE_ICON_CANVAS_PX,
+  adaptiveForegroundCoverage,
+  adaptiveForegroundScale,
+  adaptiveForegroundTransform,
+  zMarkSvg,
+} from '../src/brand/zMarkGeometry.ts';
+import { BACKGROUND, MARK_RAMP } from '../src/theme/tokens.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'assets', 'applogo');
 
-// The mark, in a 64-unit box: two bars + the overshooting "stream" diagonal.
-// `stroke` colours the bars; `diagonal` carries the accent ramp.
-const mark = (diagonal, bars = '#FFFFFF') => `
-  <path d="M14 12 H50 M14 52 H50" stroke="${bars}" stroke-width="9" fill="none"/>
-  <path d="M54 6 L12 56" stroke="${diagonal}" stroke-width="11" stroke-linecap="round" fill="none"/>
-`;
+const RAMP_STOPS = `
+        <stop offset="0" stop-color="${MARK_RAMP.bright}"/>
+        <stop offset="1" stop-color="${MARK_RAMP.deep}"/>`;
 
-const withRamp = (inner) => `
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+const RAMP_DEFS = `
     <defs>
-      <linearGradient id="zramp" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#FF3045"/>
-        <stop offset="0.55" stop-color="#E50914"/>
-        <stop offset="1" stop-color="#B20710"/>
+      <linearGradient id="zramp" x1="0" y1="0" x2="1" y2="1">${RAMP_STOPS}
       </linearGradient>
-    </defs>
-    ${inner}
-  </svg>
-`;
+    </defs>`;
 
-// Legacy full-bleed icon: dark base, ambient glow, mark at ~60%.
-const fullIcon = (size) => `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024">
+/**
+ * The mark, centred on its own ink bounds at `scale`, inside the 1024-unit
+ * adaptive canvas. The ink of the Z is not at the middle of its authoring box —
+ * it leans — so the translate comes from the derived centre; hardcoding (32, 32)
+ * is what makes a leaning mark sit visibly off-centre in a round mask.
+ */
+const markGroup = (scale, bars, diagonal) => {
+  const t = adaptiveForegroundTransform(scale);
+  return `
+    <g transform="translate(${t.translateX} ${t.translateY}) scale(${t.scale}) translate(${t.inkOffsetX} ${t.inkOffsetY})">
+      ${zMarkSvg(bars, diagonal)}
+    </g>`;
+};
+
+// Legacy full-bleed icon (pre-API-26 launchers, iOS, the TV banner the config
+// plugin composites from it): dark base, ambient glow, mark at ~62% of the canvas.
+const FULL_BLEED_SCALE = 10.6;
+const fullIcon = () => `
+  <svg xmlns="http://www.w3.org/2000/svg" width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" viewBox="0 0 ${ADAPTIVE_ICON_CANVAS_PX} ${ADAPTIVE_ICON_CANVAS_PX}">
     <defs>
       <radialGradient id="glow" cx="0.5" cy="0.42" r="0.62">
         <stop offset="0" stop-color="#3D0810" stop-opacity="0.9"/>
         <stop offset="0.55" stop-color="#16060B" stop-opacity="0.55"/>
-        <stop offset="1" stop-color="#050505" stop-opacity="0"/>
+        <stop offset="1" stop-color="${BACKGROUND.base}" stop-opacity="0"/>
       </radialGradient>
-      <linearGradient id="zramp" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#FF3045"/>
-        <stop offset="0.55" stop-color="#E50914"/>
-        <stop offset="1" stop-color="#B20710"/>
+      <linearGradient id="zramp" x1="0" y1="0" x2="1" y2="1">${RAMP_STOPS}
       </linearGradient>
     </defs>
-    <rect width="1024" height="1024" fill="#050505"/>
-    <rect width="1024" height="1024" fill="url(#glow)"/>
-    <g transform="translate(512 512) scale(8.6) translate(-32 -32)">
-      ${mark('url(#zramp)')}
-    </g>
-  </svg>
-`;
+    <rect width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" fill="${BACKGROUND.base}"/>
+    <rect width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" fill="url(#glow)"/>${markGroup(
+      FULL_BLEED_SCALE,
+      '#FFFFFF',
+      'url(#zramp)',
+    )}
+  </svg>`;
 
-// Adaptive foreground: mark inside the 66% safe zone, nothing else.
-const foregroundIcon = (size) => `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024">
-    <defs>
-      <linearGradient id="zramp" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#FF3045"/>
-        <stop offset="0.55" stop-color="#E50914"/>
-        <stop offset="1" stop-color="#B20710"/>
-      </linearGradient>
-    </defs>
-    <g transform="translate(512 512) scale(6.4) translate(-32 -32)">
-      ${mark('url(#zramp)')}
-    </g>
-  </svg>
-`;
-
-// Adaptive background layer: near-black with the faintest red bloom.
-const backgroundIcon = (size) => `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024">
-    <defs>
-      <radialGradient id="glow" cx="0.5" cy="0.45" r="0.7">
-        <stop offset="0" stop-color="#26060C" stop-opacity="0.85"/>
-        <stop offset="0.6" stop-color="#0D0508" stop-opacity="0.4"/>
-        <stop offset="1" stop-color="#050505" stop-opacity="0"/>
-      </radialGradient>
-    </defs>
-    <rect width="1024" height="1024" fill="#050505"/>
-    <rect width="1024" height="1024" fill="url(#glow)"/>
-  </svg>
-`;
-
-// Monochrome layer: white mark on transparent (Android 13+ themed icons).
-const monochromeIcon = (size) => `
-  <svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 1024 1024">
-    <g transform="translate(512 512) scale(6.4) translate(-32 -32)">
-      ${mark('#FFFFFF')}
-    </g>
-  </svg>
-`;
-
-const write = async (name, svg) => {
-  await sharp(Buffer.from(svg)).png().toFile(path.join(OUT, name));
-  console.log(`✓ ${name}`);
+/**
+ * Adaptive foreground: the mark and nothing else, scaled so its diagonal fits
+ * the 66dp-of-108dp safe circle the launcher keeps after masking.
+ */
+const foregroundIcon = () => {
+  const scale = adaptiveForegroundScale();
+  return `
+  <svg xmlns="http://www.w3.org/2000/svg" width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" viewBox="0 0 ${ADAPTIVE_ICON_CANVAS_PX} ${ADAPTIVE_ICON_CANVAS_PX}">${RAMP_DEFS}${markGroup(
+    scale,
+    '#FFFFFF',
+    'url(#zramp)',
+  )}
+  </svg>`;
 };
 
-await write('ic_launcher.png', fullIcon(1024));
-await write('ic_launcher_foreground.png', foregroundIcon(1024));
-await write('ic_launcher_background.png', backgroundIcon(1024));
-await write('ic_launcher_monochrome.png', monochromeIcon(1024));
+/**
+ * Adaptive background: flat brand surface — `BACKGROUND.base`, the same value
+ * app.json declares for `adaptiveIcon.backgroundColor`, the native launch
+ * window (`colors.xml/splashscreen_background`) and the JS app background.
+ * A flat surface keeps the mark readable at every mask shape; a gradient here
+ * would be new visual language, not the existing one.
+ */
+const backgroundIcon = () => `
+  <svg xmlns="http://www.w3.org/2000/svg" width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" viewBox="0 0 ${ADAPTIVE_ICON_CANVAS_PX} ${ADAPTIVE_ICON_CANVAS_PX}">
+    <rect width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" fill="${BACKGROUND.base}"/>
+  </svg>`;
+
+/** Monochrome layer: white mark on transparent (Android 13+ themed icons). */
+const monochromeIcon = () => `
+  <svg xmlns="http://www.w3.org/2000/svg" width="${ADAPTIVE_ICON_CANVAS_PX}" height="${ADAPTIVE_ICON_CANVAS_PX}" viewBox="0 0 ${ADAPTIVE_ICON_CANVAS_PX} ${ADAPTIVE_ICON_CANVAS_PX}">${markGroup(
+    adaptiveForegroundScale(),
+    '#FFFFFF',
+    '#FFFFFF',
+  )}
+  </svg>`;
+
+const svgByName = {
+  'ic_launcher': fullIcon(),
+  'ic_launcher_foreground': foregroundIcon(),
+  'ic_launcher_background': backgroundIcon(),
+  'ic_launcher_monochrome': monochromeIcon(),
+};
+
+mkdirSync(OUT, { recursive: true });
+
+const write = async (name, svg) => {
+  writeFileSync(`${path.join(OUT, name)}.svg`, svg.trimStart(), 'utf8');
+  await sharp(Buffer.from(svg)).png().toFile(path.join(OUT, `${name}.png`));
+  console.log(`✓ ${name}.png`);
+};
+
+for (const [name, svg] of Object.entries(svgByName)) {
+  await write(name, svg);
+}
 console.log('Icon set written to assets/applogo/');
 
 // ── Bare-android density set ────────────────────────────────────────────────
@@ -129,12 +155,19 @@ const writeWebp = async (dpi, name, svg, size, round = false) => {
 };
 
 for (const [dpi, size] of Object.entries(LAUNCHER_SIZES)) {
-  await writeWebp(dpi, 'ic_launcher.webp', fullIcon(size * 2), size);
-  await writeWebp(dpi, 'ic_launcher_round.webp', fullIcon(size * 2), size, true);
+  await writeWebp(dpi, 'ic_launcher.webp', svgByName['ic_launcher'], size);
+  await writeWebp(dpi, 'ic_launcher_round.webp', svgByName['ic_launcher'], size, true);
 }
 for (const [dpi, size] of Object.entries(LAYER_SIZES)) {
-  await writeWebp(dpi, 'ic_launcher_foreground.webp', foregroundIcon(size * 2), size);
-  await writeWebp(dpi, 'ic_launcher_background.webp', backgroundIcon(size * 2), size);
-  await writeWebp(dpi, 'ic_launcher_monochrome.webp', monochromeIcon(size * 2), size);
+  await writeWebp(dpi, 'ic_launcher_foreground.webp', svgByName['ic_launcher_foreground'], size);
+  await writeWebp(dpi, 'ic_launcher_background.webp', svgByName['ic_launcher_background'], size);
+  await writeWebp(dpi, 'ic_launcher_monochrome.webp', svgByName['ic_launcher_monochrome'], size);
 }
 console.log('Android density set written to android/app/src/main/res/');
+
+// Printed so the safe-zone claim is checkable in the build log, not just in code.
+const coverage = adaptiveForegroundCoverage(adaptiveForegroundScale());
+console.log(
+  `foreground mark: ${coverage.widthDp.toFixed(1)}×${coverage.heightDp.toFixed(1)}dp ` +
+    `(diagonal ${coverage.diagonalDp.toFixed(1)}dp, safe circle 66dp of 108dp)`,
+);

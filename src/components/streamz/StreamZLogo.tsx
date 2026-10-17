@@ -16,22 +16,25 @@ import { FONT, MARK_RAMP } from '@/src/theme/tokens';
  * The logo system: a Z built from two rails and one red cut, where the top rail
  * ends in a play head so the letter reads as forward motion.
  *
- * Geometry is authored in a 64×64 box and the design's translate is baked into
- * the coordinates, so every consumer scales the same mark without a group
- * transform. Rails are `RAIL` units thick and the diagonal overshoots both, which
- * is what keeps the Z legible at 24px — the smallest size the spec ships.
+ * The geometry lives in `src/brand/zMarkGeometry.ts` — this file draws it, and
+ * `scripts/generate-brand-assets.mjs` rasterises the same numbers for the Android
+ * launcher icon. That is what keeps the splash logo and the app icon one mark
+ * instead of two copies that drift; see the regression test
+ * `__tests__/brand-launcher-assets.test.ts`.
  */
-const RAIL = 8;
-/** x the rails start at, and the y each rail sits on. */
-const SPINE_X = 8;
-const TOP_Y = 20;
-const BOTTOM_Y = 48;
-const TOP_END = 42;
-const BOTTOM_END = 52;
-/** The diagonal runs from the play head's inner corner down to the top of the base rail. */
-const DIAGONAL = `M48 26 L12 44`;
-const DIAGONAL_LENGTH = 41;
-const PLAY_HEAD = 'M42 12 L56 20 L42 28 Z';
+import {
+  BOTTOM_END,
+  BOTTOM_Y,
+  DIAGONAL_D as DIAGONAL,
+  DIAGONAL_LENGTH,
+  MARK_VIEW_BOX,
+  PLAY_HEAD_D as PLAY_HEAD,
+  RAIL,
+  RAIL_RADIUS,
+  SPINE_X,
+  TOP_END,
+  TOP_Y,
+} from '@/src/brand/zMarkGeometry';
 
 const GRADIENT_ID = 'streamzZ';
 
@@ -57,12 +60,12 @@ export const StreamZZMark = ({
 }) => {
   const diagonal = mono || !accent ? color : `url(#${GRADIENT_ID})`;
   return (
-    <Svg width={size} height={size} viewBox="0 0 64 64" fill="none" accessible={false}>
+    <Svg width={size} height={size} viewBox={MARK_VIEW_BOX} fill="none" accessible={false}>
       {!mono && accent && <Ramp />}
-      <Rect x={SPINE_X} y={TOP_Y - RAIL / 2} width={TOP_END - SPINE_X} height={RAIL} rx={2} fill={color} />
+      <Rect x={SPINE_X} y={TOP_Y - RAIL / 2} width={TOP_END - SPINE_X} height={RAIL} rx={RAIL_RADIUS} fill={color} />
       <Path d={PLAY_HEAD} fill={color} stroke={color} strokeWidth={2} strokeLinejoin="round" />
       <Path d={DIAGONAL} stroke={diagonal} strokeWidth={RAIL} strokeLinecap="round" fill="none" />
-      <Rect x={SPINE_X} y={BOTTOM_Y - RAIL / 2} width={BOTTOM_END - SPINE_X} height={RAIL} rx={2} fill={color} />
+      <Rect x={SPINE_X} y={BOTTOM_Y - RAIL / 2} width={BOTTOM_END - SPINE_X} height={RAIL} rx={RAIL_RADIUS} fill={color} />
     </Svg>
   );
 };
@@ -116,13 +119,13 @@ export const AnimatedStreamZZMark = ({
   const headProps = useAnimatedProps(() => ({ opacity: head.value }));
 
   return (
-    <Svg width={size} height={size} viewBox="0 0 64 64" fill="none" accessible={false}>
+    <Svg width={size} height={size} viewBox={MARK_VIEW_BOX} fill="none" accessible={false}>
       <Ramp />
       <AnimatedRect
         x={SPINE_X}
         y={TOP_Y - RAIL / 2}
         height={RAIL}
-        rx={2}
+        rx={RAIL_RADIUS}
         fill={color}
         animatedProps={topRailProps}
       />
@@ -147,7 +150,7 @@ export const AnimatedStreamZZMark = ({
         x={SPINE_X}
         y={BOTTOM_Y - RAIL / 2}
         height={RAIL}
-        rx={2}
+        rx={RAIL_RADIUS}
         fill={color}
         animatedProps={baseRailProps}
       />
