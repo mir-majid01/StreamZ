@@ -2,6 +2,19 @@ import type { AccessResult, GateDecision } from '@/src/firebase/models';
 
 export interface GateFacts {
   uid: string | null;
+  /**
+   * Firebase has delivered its first `onAuthStateChanged` callback, so `uid === null` now
+   * means "there is no session" rather than "nothing has told us yet". Without this the two
+   * are indistinguishable and the very first frames of the app answer a signed-out device for
+   * a returning one.
+   */
+  authHydrated: boolean;
+  /**
+   * Auth state cannot be established at all — Firebase was never configured, or it did not
+   * report within the hydration budget. This is a known answer of "no answer", which is a
+   * dead end the gate names, not a wait.
+   */
+  authInitFailed: boolean;
   /** The uid the verdict was issued for. A verdict for another account is never honoured. */
   liveUid: string | null;
   live: AccessResult | null;
@@ -13,6 +26,9 @@ export interface GateFacts {
 
 /**
  * Ordering rules, in the order they are applied:
+ *  0. Auth has to be known before anything else can be. An app that cannot say whether a
+ *     session exists says so, and never guesses `signedOut` — a guess here is the one that
+ *     shows Login for a moment before the real verdict replaces it.
  *  1. A live negative verdict (needsKey / expired / revoked / suspended / disabled /
  *     ceiling) always wins, even while the transport is failing. Caching must never
  *     rescue a revocation.
@@ -23,6 +39,13 @@ export interface GateFacts {
  *     only for a non-negative age (a future-dated cache entry is not trusted).
  */
 export function decideGate(f: GateFacts): GateDecision {
+  // A device that cannot reach auth has not reached a signed-out state; it has reached the
+  // same dead end as a device that cannot reach the server, and `needsServerContact` is the
+  // one decision that routes there. It outranks everything below because nothing else is
+  // knowable without it.
+  if (f.authInitFailed) return 'needsServerContact';
+  if (!f.authHydrated) return 'bootstrapping';
+
   if (!f.uid) return 'signedOut';
 
   const live = f.live && f.liveUid === f.uid ? f.live : null;

@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BackHandler, useWindowDimensions } from 'react-native';
 import { Box } from '@/components/ui/box';
 import { VStack } from '@/components/ui/vstack';
 import { UpdateModal } from '@/src/components/UpdateModal';
-import { StreamZLoader, StreamZText, StreamZAmbient } from '@/src/components/streamz';
+import {
+  StreamZLoader,
+  StreamZText,
+  StreamZAmbient,
+  usePrefersReducedMotion,
+} from '@/src/components/streamz';
 import {
   StreamZSplashWordmark,
-  TOTAL_MS,
-  LOGO_SETTLE_MS,
   splashLogoSize,
 } from '@/src/components/splash/StreamZSplashWordmark';
 import { UPDATE_CONFIG } from '@/src/config/env';
@@ -18,6 +21,12 @@ import { useSession } from '@/src/firebase/auth/SessionProvider';
 import { evaluateReleasePolicy } from '@/src/firebase/release/policy';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 import { mark } from '@/src/utils/startupTiming';
+import {
+  bootMustWaitForReleaseCheck,
+  identTimeline,
+  splashMayEnter,
+  splashStatusMessage,
+} from '@/src/utils/startupSequence';
 import { installedReleaseVersion } from '@/src/utils/appVersion';
 import type { UpdateInfo } from '@/src/services/UpdateService';
 import {
@@ -60,6 +69,8 @@ const infoFromPolicy = (policy: ReleasePolicy, verdict: UpdateVerdict): UpdateIn
 export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => {
   const { width: windowWidth } = useWindowDimensions();
   const { width: logoWidth, height: logoHeight } = splashLogoSize(windowWidth);
+  const reduced = usePrefersReducedMotion();
+  const timeline = useMemo(() => identTimeline(reduced), [reduced]);
   useEffect(() => {
     mark('splash-mounted');
   }, []);
@@ -76,7 +87,10 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   const [updatePolicy, setUpdatePolicy] = useState<ReleasePolicy | null>(null);
   const [updateMandatory, setUpdateMandatory] = useState(false);
   const drawDoneRef = useRef(false);
-  const bootDoneRef = useRef(false);
+  // With the updater off there is no boot work that has to precede entry, so boot is settled
+  // at mount instead of after two AsyncStorage round-trips whose only possible answer is
+  // "no verdict, continue". See `bootMustWaitForReleaseCheck`.
+  const bootDoneRef = useRef(!bootMustWaitForReleaseCheck(UPDATE_CONFIG.enabled));
   const didStartExitRef = useRef(false);
   const didNavigateRef = useRef(false);
   const bootFnsRef = useRef({ refreshBuiltInServers, prefetch });
@@ -96,15 +110,31 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
 
   const maybeExit = useCallback(() => {
     if (didStartExitRef.current) return;
-    if (!drawDoneRef.current || !bootDoneRef.current) return;
-    // Gate totality: never leave Splash before auth and subscription are resolved.
-    if (gateRef.current.decision === 'bootstrapping') return;
+    // `gateKnown` is the clause that used to be missing its own name: the gate's
+    // `bootstrapping` decision is the gate saying "I do not know yet", and leaving Splash on
+    // that answer is how the app showed Login for a beat before the real session landed.
+    if (
+      !splashMayEnter({
+        drawn: drawDoneRef.current,
+        booted: bootDoneRef.current,
+        gateKnown: gateRef.current.decision !== 'bootstrapping',
+      })
+    ) {
+      return;
+    }
     didStartExitRef.current = true;
     goMain();
   }, [goMain]);
   const maybeExitRef = useRef(maybeExit);
   maybeExitRef.current = maybeExit;
 
+  /**
+   * The ident reports its own completion from the animation's finish callback, so "drawn" is
+   * something that happened rather than something that was assumed. `markDrawDone` is also the
+   * guard for the one case where that callback cannot be trusted — a surface that never gets a
+   * frame because the app was backgrounded mid-animation — which is what the bounded watchdog
+   * below exists to release, never to hold.
+   */
   const markDrawDone = useCallback(() => {
     drawDoneRef.current = true;
     setShowCopy(true);
@@ -115,9 +145,10 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   const onIdentDrawEnd = useCallback(() => {
     markDrawDoneRef.current();
   }, []);
+  /** The copy appears when the lockup is in place, not on a separately guessed schedule. */
+  const onIdentSettled = useCallback(() => setShowCopy(true), []);
 
   const finishBoot = useCallback(async () => {
-    await saveLastUpdateCheck();
     bootDoneRef.current = true;
     maybeExitRef.current();
   }, []);
@@ -127,6 +158,9 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
     // and closing it is not a path into the app even if something calls this.
     if (updateMandatory) return;
     setUpdaterOpen(false);
+    // The check happened, so the interval clock starts here — but after the readiness
+    // signal, never as a delay in front of it.
+    void saveLastUpdateCheck();
     void finishBoot();
   }, [finishBoot, updateMandatory]);
 
@@ -141,22 +175,29 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
       await setSkippedVersion(updateInfo.latestVersion);
     }
     setUpdaterOpen(false);
+    void saveLastUpdateCheck();
     void finishBoot();
   }, [updateInfo, finishBoot]);
 
+  /**
+   * A bound, not a schedule. The ident's own animation callback is what marks the draw done;
+   * this exists only for the case where that callback never arrives (a surface that got no
+   * frame while the app was backgrounded), and it fires at the ident's own nominal end rather
+   * than at a pad on top of it, so it cannot make the handoff later than the artwork already
+   * promised. Under reduce-motion there is no ident to wait for and nothing is armed.
+   */
   useEffect(() => {
-    const reveal = setTimeout(() => setShowCopy(true), LOGO_SETTLE_MS);
-    const fallback = setTimeout(() => markDrawDoneRef.current(), TOTAL_MS + 80);
-    return () => {
-      clearTimeout(reveal);
-      clearTimeout(fallback);
-    };
-  }, []);
+    if (!timeline.animated) return;
+    const watchdog = setTimeout(() => markDrawDoneRef.current(), timeline.totalMs);
+    return () => clearTimeout(watchdog);
+  }, [timeline.animated, timeline.totalMs]);
 
+  // The gate is the other half of the readiness signal: it can become known before or after
+  // the ident, so the handoff is evaluated on every change of either.
   useEffect(() => {
     if (gateDecision !== 'bootstrapping') mark(`gate-decision:${gateRoute}`);
     maybeExitRef.current();
-  }, [gateDecision]);
+  }, [gateDecision, gateRoute]);
 
   useEffect(() => {
     // Playback servers are needed for the player, not for the gate — fetch them
@@ -168,6 +209,11 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
   }, []);
 
   useEffect(() => {
+    // The updater being off is not a state that has to be discovered: `checkPolicySafe` would
+    // return `null` and the rest of this body would be one AsyncStorage write whose only
+    // possible result is "continue". Boot is already settled at mount in that case, so the
+    // splash must not wait on the region read to say so.
+    if (!UPDATE_CONFIG.enabled) return;
     if (!regionLoaded) return;
 
     let cancelled = false;
@@ -215,24 +261,29 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
 
   // Status copy is keyed to the REAL gate state (PRD §4): it may never promise
   // anything the session layer has not actually decided, and technical stages
-  // (firebase module, firestore fetch) are never named.
-  const statusMessage =
-    gateDecision === 'bootstrapping'
-      ? 'Checking access…'
-      : gateDecision === 'needsServerContact'
-        ? 'Connecting…'
-        : 'Preparing StreamZ…';
+  // (firebase module, firestore fetch) are never named. The mapping itself lives in
+  // `startupSequence.ts` because a screen cannot be imported into this Jest setup.
+  const statusMessage = splashStatusMessage(gateDecision);
 
   return (
     <Box className="flex-1 bg-background">
-      <Box className="absolute inset-0" pointerEvents="none">
-        <StreamZAmbient />
-      </Box>
+      {/* The ambient bloom is a twelve-second infinite drift. Under reduce-motion it
+          is not "a slower drift", it is motion that was asked not to happen, so it is
+          not mounted at all — the ident and the copy are what carry the screen. */}
+      {reduced ? null : (
+        <Box className="absolute inset-0" pointerEvents="none">
+          <StreamZAmbient />
+        </Box>
+      )}
       <Box
         className="absolute inset-0 items-center justify-center overflow-visible"
         pointerEvents="none"
       >
-        <StreamZSplashWordmark onDrawEnd={onIdentDrawEnd} />
+        <StreamZSplashWordmark
+          reduced={reduced}
+          onSettled={onIdentSettled}
+          onDrawEnd={onIdentDrawEnd}
+        />
       </Box>
 
       <VStack
@@ -241,8 +292,11 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         pointerEvents="none"
       >
         <Box style={{ width: logoWidth, height: logoHeight + 20 }} />
+        {/* The loader is three dots breathing on an infinite repeat, which is motion rather
+            than feedback. It is not mounted under reduce-motion, but its 8dp slot is, so the
+            status line sits in exactly the same place either way. */}
         <Box className="mt-20" style={{ opacity: showCopy ? 1 : 0 }}>
-          <StreamZLoader />
+          {reduced ? <Box style={{ height: 8 }} /> : <StreamZLoader />}
         </Box>
         <Box className="min-h-10 px-8" style={{ opacity: showCopy ? 1 : 0 }}>
           <StreamZText variant="secondary" className="text-center text-muted-foreground">

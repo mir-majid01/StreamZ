@@ -1,6 +1,6 @@
 <resources>
   <!-- #050505 matches the JS background (app.json backgroundColor / tokens.ts
-       BACKGROUND.ink) so the native launch window and the first React frame are
+       BACKGROUND.base) so the native launch window and the first React frame are
        the same colour — no seam as the splash hands off to the app. -->
   <color name="splashscreen_background">#050505</color>
   <color name="iconBackground">#000000</color>

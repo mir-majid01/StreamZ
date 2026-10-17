@@ -1,12 +1,39 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
+  <!--
+    StreamZ is dark-only, and this is the only place the launch surface is decided.
+
+    `android:colorBackground` is overridden rather than inherited because the parent is a
+    DayNight theme: on a device in system-light mode AppCompat resolves it to the light
+    material value (#FAFAFA). `index.ts` pins the scheme to dark for React Native's
+    `Appearance`, and `global.css` makes the dark palette the unconditional `:root`, but
+    neither of those changes how Android resolves this theme before the first React frame
+    exists — so an inherited `colorBackground` was the one launch colour the JS side had no
+    way to reach.
+
+    `windowSplashScreenBackground` is pinned for the same reason on Android 12+ (this app
+    targets SDK 36, so the platform's own SplashScreen is always the first thing drawn). Its
+    documented default is the theme's `windowBackground` when that is a single colour, which it
+    is — but pinning it removes the inference, and setting it on both themes means the answer is
+    the same whether the platform read the manifest theme or the one MainActivity installs in
+    `onCreate`. Both resources are #050505, the same value as `tokens.BACKGROUND.base` and
+    `app.json`'s `backgroundColor`, so there is no seam between the launch window, the system
+    splash, and the first committed React frame.
+
+    The icon is deliberately not overridden: with no `windowSplashScreenAnimatedIcon` the system
+    uses the adaptive launcher icon, which is generated from the same Z-mark geometry the splash
+    wordmark renders (see `src/brand/zMarkGeometry.ts`).
+  -->
   <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
     <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     <item name="colorPrimary">@color/colorPrimary</item>
     <item name="android:statusBarColor">@android:color/transparent</item>
     <item name="android:navigationBarColor">@android:color/transparent</item>
     <item name="android:windowBackground">@color/activityBackground</item>
+    <item name="android:colorBackground">@color/activityBackground</item>
+    <item name="android:windowSplashScreenBackground" tools:targetApi="s">@color/splashscreen_background</item>
   </style>
   <style name="Theme.App.SplashScreen" parent="AppTheme">
     <item name="android:windowBackground">@color/splashscreen_background</item>
+    <item name="android:windowSplashScreenBackground" tools:targetApi="s">@color/splashscreen_background</item>
   </style>
 </resources>

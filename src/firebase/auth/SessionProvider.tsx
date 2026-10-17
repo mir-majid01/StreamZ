@@ -14,6 +14,10 @@ import {
 } from '@/src/firebase/models';
 import type { GateDecision } from '@/src/firebase/models';
 import { mark } from '@/src/utils/startupTiming';
+import {
+  AUTH_HYDRATION_BUDGET_MS,
+  didAuthHydrationTimeOut,
+} from '@/src/utils/startupSequence';
 
 const CACHE_KEY = 'streamz.access.cache';
 const REVALIDATE_MS = 15 * 60_000;
@@ -59,8 +63,63 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [lastGoodAuthorizedAt, setLastGood] = useState<number | null>(null);
   const [config, setConfig] = useState<AppConfigDoc>(CONFIG_DEFAULTS);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // Two separate facts, because `uid === null` means two different things depending on
+  // whether Firebase has reported yet. Collapsing them is what let the app answer
+  // "signed out" for a returning user and flash Login before the real session landed.
+  const [authHydrated, setAuthHydrated] = useState(false);
+  const [authInitFailed, setAuthInitFailed] = useState(false);
   const inFlight = useRef<Promise<void> | null>(null);
   const authMarkedRef = useRef(false);
+  // Read from the watchdog callback and from `refresh`, both of which outlive the render that
+  // scheduled them. Held in refs as well as state so neither has to depend on a state value
+  // just to read it back — that would hand `refresh` a new identity on every auth change and
+  // fire an extra subscription round-trip each time.
+  const authHydratedRef = useRef(false);
+  const authInitFailedRef = useRef(false);
+
+  const failAuthInit = useCallback(
+    (reason: string): void => {
+      if (authHydratedRef.current) return;
+      mark(`auth-init-failed:${reason}`);
+      authInitFailedRef.current = true;
+      setAuthInitFailed(true);
+    },
+    [],
+  );
+
+  /**
+   * The single place the app learns whether a session exists. `source` distinguishes the
+   * listener's own report from the retry that reads `currentUser` after the budget expired;
+   * only the listener path feeds analytics, because a retry is a recovery, not a change.
+   */
+  const acceptAuthReport = useCallback(
+    (firebaseUser: User | null, source: 'listener' | 'retry'): void => {
+      if (!authMarkedRef.current) {
+        const outcome = firebaseUser ? 'auth-restored' : 'auth-restored:signed-out';
+        authMarkedRef.current = true;
+        mark(source === 'retry' ? `${outcome}-by-retry` : outcome);
+      }
+      authHydratedRef.current = true;
+      authInitFailedRef.current = false;
+      setAuthHydrated(true);
+      setAuthInitFailed(false);
+      const nextUid = firebaseUser?.uid ?? null;
+      setUid(nextUid);
+      setNowMs(Date.now());
+      setUser(
+        firebaseUser
+          ? {
+              uid: firebaseUser.uid,
+              email: firebaseUser.email,
+              displayName: firebaseUser.displayName,
+              photoURL: firebaseUser.photoURL,
+            }
+          : null,
+      );
+      if (source === 'listener') void setAnalyticsUser(nextUid);
+    },
+    [],
+  );
 
   useEffect(() => {
     void disableAdvertisingId();
@@ -73,6 +132,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const refresh = useCallback(async (): Promise<void> => {
+    // The dead end the gate reaches when auth never reports is retryable, because BlockedScreen's
+    // retry button calls exactly this. Guarded on the budget already having expired: before that
+    // point `currentUser` is not trustworthy on Android — FirebaseAuth restores persistence
+    // asynchronously and can answer `null` for a signed-in device, which is precisely the guess
+    // this whole change exists to stop. After twelve silent seconds it is the best answer
+    // available, and a `null` there is an observed signed-out state rather than an assumption.
+    if (authInitFailedRef.current && !authHydratedRef.current && ensureFirebase()) {
+      acceptAuthReport(getAuth().currentUser, 'retry');
+    }
     if (inFlight.current) return inFlight.current;
     const work = (async () => {
       const target = uid;
@@ -116,33 +184,35 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       inFlight.current = null;
     }
-  }, [uid]);
+  }, [uid, acceptAuthReport]);
 
   useEffect(() => {
-    if (!ensureFirebase()) return;
+    if (!ensureFirebase()) {
+      // No Firebase app means no auth state will ever be reported, so this is a named dead
+      // end rather than a wait. Without it the gate would hold on `bootstrapping` forever.
+      failAuthInit('firebase-unconfigured');
+      return;
+    }
     mark('firebase-ready');
+    const subscribedAt = Date.now();
     const subscriber = onAuthStateChanged(getAuth(), (firebaseUser: User | null) => {
-      if (!authMarkedRef.current) {
-        authMarkedRef.current = true;
-        mark(firebaseUser ? 'auth-restored' : 'auth-restored:signed-out');
-      }
-      const nextUid = firebaseUser?.uid ?? null;
-      setUid(nextUid);
-      setNowMs(Date.now());
-      setUser(
-        firebaseUser
-          ? {
-              uid: firebaseUser.uid,
-              email: firebaseUser.email,
-              displayName: firebaseUser.displayName,
-              photoURL: firebaseUser.photoURL,
-            }
-          : null,
-      );
-      void setAnalyticsUser(nextUid);
+      acceptAuthReport(firebaseUser, 'listener');
     });
-    return subscriber;
-  }, []);
+    // A ceiling on the wait, never the thing that ends it. The first callback reads persisted
+    // state and needs no network, so silence past the budget means the listener is not coming;
+    // the app then routes to the designed dead end instead of parking the user on Splash. The
+    // elapsed time is measured rather than assumed, because a timer that fires late under load
+    // must not declare a failure the app has already recovered from.
+    const watchdog = setTimeout(() => {
+      if (didAuthHydrationTimeOut(Date.now() - subscribedAt, authHydratedRef.current)) {
+        failAuthInit('hydration-budget');
+      }
+    }, AUTH_HYDRATION_BUDGET_MS);
+    return () => {
+      clearTimeout(watchdog);
+      subscriber();
+    };
+  }, [acceptAuthReport, failAuthInit]);
 
   useEffect(() => {
     void refresh();
@@ -160,6 +230,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const facts: GateFacts = useMemo(
     () => ({
       uid,
+      authHydrated,
+      authInitFailed,
       liveUid,
       live,
       transportFailed,
@@ -167,7 +239,17 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       nowMs,
       graceMs: graceMsFrom(config),
     }),
-    [uid, liveUid, live, transportFailed, lastGoodAuthorizedAt, nowMs, config],
+    [
+      uid,
+      authHydrated,
+      authInitFailed,
+      liveUid,
+      live,
+      transportFailed,
+      lastGoodAuthorizedAt,
+      nowMs,
+      config,
+    ],
   );
 
   const decision = decideGate(facts);

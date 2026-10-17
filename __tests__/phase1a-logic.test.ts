@@ -19,6 +19,11 @@ const DAY = 86_400_000;
 const ok: AccessResult = { status: 'authorized', expiresAt: NOW + DAY * 10, serverTimeMs: NOW };
 const base = {
   uid: 'u1',
+  // Auth has reported, so `uid: null` below genuinely means "signed out" rather than "nobody
+  // has told us yet". Every pre-existing case in this file is written against a hydrated
+  // session; the hydration states have their own block further down.
+  authHydrated: true,
+  authInitFailed: false,
   liveUid: 'u1',
   live: null as AccessResult | null,
   transportFailed: false,
@@ -85,6 +90,37 @@ describe('decideGate', () => {
     it('never lets a live revoked verdict be rescued by the cache', () =>
       expect(decideGate({ ...f, live: { ...ok, status: 'revoked' } })).toBe('blocked'));
   });
+});
+
+describe('auth hydration outranks every other fact', () => {
+  // The defect these cases hold shut: `uid === null` used to be the whole test for "signed
+  // out", and it is also what a returning user looks like for the few hundred milliseconds
+  // before Firebase reports the persisted session. Answering `signedOut` there is what showed
+  // Login and then had to be navigated away from again.
+  it('holds on bootstrapping while auth has not reported, even with no uid', () =>
+    expect(decideGate({ ...base, uid: null, authHydrated: false })).toBe('bootstrapping'));
+
+  it('will not call a returning user signed out before the report lands', () =>
+    expect(routeFor(decideGate({ ...base, uid: null, authHydrated: false }))).not.toBe('Login'));
+
+  it('reports signedOut once auth has said so', () =>
+    expect(decideGate({ ...base, uid: null, authHydrated: true })).toBe('signedOut'));
+
+  it('still bootstraps a uid that has no verdict yet, hydrated or not', () =>
+    expect(decideGate({ ...base, authHydrated: true })).toBe('bootstrapping'));
+
+  it('names an auth initialisation failure instead of waiting forever on it', () =>
+    expect(decideGate({ ...base, uid: null, authHydrated: false, authInitFailed: true })).toBe(
+      'needsServerContact',
+    ));
+
+  it('routes that failure to the designed dead end, not to Login', () =>
+    expect(routeFor(decideGate({ ...base, uid: null, authInitFailed: true }))).toBe('Blocked'));
+
+  it('outranks a live verdict, because no verdict is trustworthy without a session', () =>
+    expect(decideGate({ ...base, live: ok, authHydrated: false, authInitFailed: true })).toBe(
+      'needsServerContact',
+    ));
 });
 
 describe('routeFor and shouldRevalidate', () => {
