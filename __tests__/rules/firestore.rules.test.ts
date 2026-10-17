@@ -267,6 +267,34 @@ describe('reading keys', () => {
     await assertSucceeds(getDoc(doc(alice(), 'subscriptionKeys', HASH_A)));
   });
 
+  // Owner's item 8 asks the app to tell "already used by another account" apart from "no such
+  // key". These two assertions are why it cannot, and why it must not try: the read that the
+  // activation transaction starts with answers the same way for a key bound to someone else as
+  // for a hash that was never minted. Making them distinguishable — for example by letting a
+  // signed-in caller succeed on a missing document — would hand every Google account a probe
+  // for walking the keyspace and learning which hashes StreamZ has issued.
+  it('refuses a never-minted key the same way it refuses a hidden one', async () => {
+    const neverMinted = 'f'.repeat(64);
+    await assertFails(getDoc(doc(bob(), 'subscriptionKeys', neverMinted)));
+    await seed('subscriptionKeys', HASH_A, keyDoc({ status: 'ACTIVE', uid: ALICE }));
+    await assertFails(getDoc(doc(bob(), 'subscriptionKeys', HASH_A)));
+    // Only a caller who may already read the whole ledger can tell the two apart, and that
+    // caller is staff, not a phone.
+    await assertSucceeds(getDoc(doc(staff('manager'), 'subscriptionKeys', neverMinted)));
+  });
+
+  // A key the admin revoked or expired is still readable by the account it was bound to, which
+  // is what lets the app report `REVOKED` and `EXPIRED` as themselves instead of as a failure to
+  // find the key — and the timestamp it carries is the only one a screen may show as "ago".
+  it('lets the bound account read its own revoked or expired key', async () => {
+    await seed('subscriptionKeys', HASH_A, keyDoc({ status: 'REVOKED', uid: ALICE, expiresAt: Date.now() - DAY }));
+    const revoked = await getDoc(doc(alice(), 'subscriptionKeys', HASH_A));
+    expect(revoked.data()!.status).toBe('REVOKED');
+    expect(revoked.data()!.expiresAt).toBeLessThan(Date.now());
+    await seed('subscriptionKeys', HASH_A, keyDoc({ status: 'EXPIRED', uid: ALICE, expiresAt: Date.now() - DAY }));
+    await assertSucceeds(getDoc(doc(alice(), 'subscriptionKeys', HASH_A)));
+  });
+
   it('never lets a subscriber list the collection', async () => {
     // Rules cannot see query filters, so `list` here would hand every device the keyspace.
     await assertFails(getDocs(collection(alice(), 'subscriptionKeys')));

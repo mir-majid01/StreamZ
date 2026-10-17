@@ -17,7 +17,12 @@ import {
   type ActivateResult,
   type AppConfigDoc,
   type DeviceDoc,
+  type ExpiryOwner,
 } from '@/src/firebase/models';
+import {
+  isRulesRefusalError,
+  isTransportFailureText,
+} from '@/src/firebase/subscriptions/keyOutcome';
 
 /**
  * There is no Cloud Functions tier — the project is on the free Spark plan — so the client
@@ -57,21 +62,16 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
-/** Firestore's code strings arrive both bare and namespaced across SDK versions. */
-function errorText(e: unknown): string {
-  const err = e as { code?: string | number; message?: string };
-  const code = typeof err?.code === 'string' ? err.code : '';
-  return `${code} ${err?.message ?? ''}`.toLowerCase();
-}
-
-const isRefusal = (e: unknown): boolean => /permission.denied|unauthenticated/.test(errorText(e));
-
 /**
- * Exported so a screen can tell "the rules refused this write" apart from "the network was
- * down". The two need different copy: a refusal will fail identically on the next attempt,
- * while a transport error is worth retrying.
+ * The classification itself lives in `keyOutcome.ts`, next to the sentences it produces, so a
+ * screen cannot reach a different answer than the mapping does. These two names stay here
+ * because callers already read them as properties of the access layer.
+ *
+ * `isRulesRefusal` distinguishes "the rules refused this write" from "the network was down".
+ * The two need different copy: a refusal will fail identically on the next attempt, while a
+ * transport error is worth retrying — and neither one is ever evidence that a key is invalid.
  */
-export const isRulesRefusal = isRefusal;
+export const isRulesRefusal = isRulesRefusalError;
 
 /**
  * `permission-denied` is a rules verdict and must surface as itself: folding it into the
@@ -79,18 +79,21 @@ export const isRulesRefusal = isRefusal;
  */
 export function isFirestoreTransportFailure(e: unknown): boolean {
   if (e instanceof TransportError) return true;
-  if (isRefusal(e)) return false;
-  return /unavailable|deadline.exceeded|network|resource.exhausted|internal|unimplemented|cancelled/.test(
-    errorText(e),
-  );
+  return isTransportFailureText(e);
 }
 
-const verdict = (status: AccessStatus, expiresAt: number | null): AccessResult => ({
+const verdict = (
+  status: AccessStatus,
+  expiresAt: number | null,
+  expiryOwner: ExpiryOwner = 'unknown',
+): AccessResult => ({
   status,
   expiresAt,
   // No server clock any more: the "server time" the gate compares against is this device's
   // own reading, which is exactly what the rules' expiry arithmetic is checked against too.
   serverTimeMs: Date.now(),
+  // Only a verdict that names an instant can name whose instant it was.
+  expiryOwner: expiresAt === null ? 'unknown' : expiryOwner,
 });
 
 const asRecord = (value: unknown): Record<string, unknown> =>
@@ -104,7 +107,12 @@ const maybeNum = (value: unknown): number | null =>
 
 const deviceDocId = (uid: string, installationId: string): string => `${uid}__${installationId}`;
 
-/** A refusal grants no access, so it carries neither an expiry nor a term length. */
+/**
+ * A refusal grants no access, so it carries no term length. It also carries no expiry, with one
+ * exception handled at the call site: `EXPIRED` reports the expiry the key document stated,
+ * because that timestamp is the observation the refusal was made from, not a value the client
+ * decided.
+ */
 const refused = (code: ActivateCode): ActivateResult => ({
   code,
   expiresAt: null,
@@ -162,21 +170,33 @@ export async function validate(): Promise<AccessResult> {
     if (!keySnap.exists()) {
       // The account points at a key this device cannot see. Trust the lower of the two
       // available answers rather than granting access on a document that may be gone.
+      // The only expiry left to honour is the account's own, so the verdict says so.
       return userExpiry > Date.now()
-        ? verdict('authorized', userExpiry)
-        : verdict('expired', userExpiry);
+        ? verdict('authorized', userExpiry, 'account')
+        : verdict('expired', userExpiry, 'account');
     }
     const key = asRecord(keySnap.data());
     const keyStatus = String(key.status ?? '').toUpperCase();
+    const keyExpiry = maybeNum(key.expiresAt);
     if (keyStatus === 'REVOKED') return verdict('revoked', null);
-    if (keyStatus === 'EXPIRED') return verdict('expired', null);
+    if (keyStatus === 'EXPIRED') {
+      // The admin's own statement that this key is out of date. Its `expiresAt`, when the
+      // document has one, is the instant it says the key ran out — carry it so the screen can
+      // answer "how long ago" instead of only "when", and leave it null when the document
+      // never recorded one rather than inventing a duration from the account's expiry.
+      return verdict('expired', keyExpiry, keyExpiry === null ? 'unknown' : 'key');
+    }
 
-    const keyExpiry = num(key.expiresAt, 0);
-    if (keyStatus !== 'ACTIVE' || keyExpiry <= 0) return verdict('needsKey', null);
+    if (keyStatus !== 'ACTIVE' || keyExpiry === null || keyExpiry <= 0) return verdict('needsKey', null);
+    // Two documents, two expiries, and the earlier one governs. Which one that was is a fact
+    // the user is entitled to: "your key expired" and "your account term ended" are different
+    // problems with different fixes, and the old copy called both of them "Expired".
     const effective = Math.min(userExpiry, keyExpiry);
+    const owner: ExpiryOwner =
+      keyExpiry < userExpiry ? 'key' : userExpiry < keyExpiry ? 'account' : 'both';
     return effective > Date.now()
-      ? verdict('authorized', effective)
-      : verdict('expired', effective);
+      ? verdict('authorized', effective, owner)
+      : verdict('expired', effective, owner);
   } catch (e) {
     if (isFirestoreTransportFailure(e)) throw new TransportError('transport');
     throw e;
@@ -219,9 +239,21 @@ export async function activate(rawKey: string): Promise<ActivateResult> {
         const durationMs = maybeNum(key.durationMs) ?? durationDays * DAY_MS;
         if (keyStatus === 'REVOKED') return refused('REVOKED');
         if (keyStatus === 'EXPIRED' || (keyExpiry !== null && keyExpiry <= now)) {
-          return refused('EXPIRED');
+          // The instant the key document itself stated, which is the fact this refusal rests
+          // on and the only thing that lets a screen say "expired 3 days ago" instead of
+          // "expired". Null when the document carried no timestamp — the caller must then fall
+          // back to the plain sentence rather than borrow the account's expiry as the key's.
+          return { code: 'EXPIRED', expiresAt: keyExpiry, durationDays: null, durationMs: null };
         }
         if (keyStatus === 'ACTIVE') {
+          // `ALREADY_BOUND` is mapped but rarely reachable for an ordinary subscriber: the
+          // rules only let a caller read a key that is UNUSED or already its own
+          // (`allow get: ... resource.data.status == 'UNUSED' || resource.data.uid == request.auth.uid`),
+          // so a key bound to somebody else refuses this very read and the call throws
+          // `permission-denied` instead. That is deliberate — being able to tell "somebody
+          // else holds this key" apart from "no such key" is an existence oracle over the
+          // keyspace — so the screen reports the refusal as a check that could not be
+          // completed, never as a claim about who owns the key.
           return key.uid === uid
             ? { code: 'ALREADY_OWNED', expiresAt: keyExpiry, durationDays, durationMs }
             : refused('ALREADY_BOUND');

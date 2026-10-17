@@ -55,6 +55,10 @@ jest.mock('@/src/utils/appVersion', () => ({ getAppVersion: () => '1.0.0' }));
 
 import { ensureFirebase, currentUserUid } from '@/src/firebase/init';
 import { activate, validate, TransportError } from '@/src/firebase/subscriptions/api';
+import {
+  keyOutcomeMessage,
+  keyOutcomeOfActivateResult,
+} from '@/src/firebase/subscriptions/keyOutcome';
 
 const DAY = 86_400_000;
 const NOWISH = Date.now();
@@ -248,5 +252,101 @@ describe('activate', () => {
       () => Promise.reject(new Error('firestore/permission-denied Missing or insufficient permissions.')),
     );
     await expect(activate(KEY)).rejects.not.toBeInstanceOf(TransportError);
+  });
+});
+
+/**
+ * Owner's item 8 needs more than a code: it needs the observation the code was reached from.
+ * The key document and `users/{uid}` both carry an `expiresAt`, they expire independently, and
+ * an `EXPIRED` answer that cannot say which one ran out sends the user to buy a new key for
+ * nothing. These cover what the client reports, not the arithmetic it already did.
+ */
+describe('whose expiry an expiry is', () => {
+  const KEY = '8JKM2-NPQRS-4T6VW-7XYZA';
+
+  it('names the key when the key document expires first', async () => {
+    mockStore['users/u1'] = { status: 'active', subscriptionId: MOCK_KEY_HASH, expiresAt: NOWISH + 10 * DAY };
+    mockStore[KEY_PATH] = { ...activeKey, expiresAt: NOWISH - 3 * DAY };
+    const r = await validate();
+    expect(r.status).toBe('expired');
+    expect(r.expiresAt).toBe(NOWISH - 3 * DAY);
+    expect(r.expiryOwner).toBe('key');
+  });
+
+  it('names the account when the account term ended first and the key did not', async () => {
+    mockStore['users/u1'] = { status: 'active', subscriptionId: MOCK_KEY_HASH, expiresAt: NOWISH - 3 * DAY };
+    mockStore[KEY_PATH] = { ...activeKey, expiresAt: NOWISH + 10 * DAY };
+    const r = await validate();
+    expect(r.status).toBe('expired');
+    expect(r.expiresAt).toBe(NOWISH - 3 * DAY);
+    expect(r.expiryOwner).toBe('account');
+  });
+
+  it('names both when the two documents state the same instant', async () => {
+    mockStore['users/u1'] = { status: 'active', subscriptionId: MOCK_KEY_HASH, expiresAt: NOWISH - DAY };
+    mockStore[KEY_PATH] = { ...activeKey, expiresAt: NOWISH - DAY };
+    const r = await validate();
+    expect(r.expiryOwner).toBe('both');
+  });
+
+  it('attributes the account when the key behind the account cannot be read at all', async () => {
+    // The rules hide a key bound to somebody else, so the only expiry left is the account's.
+    mockStore['users/u1'] = { status: 'active', subscriptionId: MOCK_KEY_HASH, expiresAt: NOWISH - DAY };
+    const r = await validate();
+    expect(r.status).toBe('expired');
+    expect(r.expiryOwner).toBe('account');
+  });
+
+  it('reports a staff-set EXPIRED key with the expiry that document carries', async () => {
+    mockStore['users/u1'] = { status: 'active', subscriptionId: MOCK_KEY_HASH, expiresAt: NOWISH + 10 * DAY };
+    mockStore[KEY_PATH] = { ...activeKey, status: 'EXPIRED', expiresAt: NOWISH - 2 * DAY };
+    const r = await validate();
+    expect(r.status).toBe('expired');
+    expect(r.expiresAt).toBe(NOWISH - 2 * DAY);
+    expect(r.expiryOwner).toBe('key');
+  });
+
+  it('invents no timestamp for an EXPIRED key that never recorded one', async () => {
+    mockStore['users/u1'] = { status: 'active', subscriptionId: MOCK_KEY_HASH, expiresAt: NOWISH + 10 * DAY };
+    mockStore[KEY_PATH] = { ...activeKey, status: 'EXPIRED', expiresAt: null };
+    const r = await validate();
+    expect(r.status).toBe('expired');
+    expect(r.expiresAt).toBeNull();
+    expect(r.expiryOwner).toBe('unknown');
+  });
+
+  it('says nothing about time when the account itself is suspended', async () => {
+    mockStore['users/u1'] = {
+      status: 'suspended',
+      subscriptionId: MOCK_KEY_HASH,
+      expiresAt: NOWISH + DAY,
+    };
+    const r = await validate();
+    expect(r.status).toBe('suspended');
+    expect(r.expiresAt).toBeNull();
+    expect(r.expiryOwner).toBe('unknown');
+  });
+
+  it('hands an EXPIRED activation the key document own expiry', async () => {
+    mockStore[KEY_PATH] = { ...unusedKey, status: 'EXPIRED', expiresAt: NOWISH - 2 * DAY };
+    const r = await activate(KEY);
+    expect(r.code).toBe('EXPIRED');
+    expect(r.expiresAt).toBe(NOWISH - 2 * DAY);
+    // A refusal granted no term, so it must not pretend to have one.
+    expect(r.durationDays).toBeNull();
+    expect(r.durationMs).toBeNull();
+    expect(mockWrites).toHaveLength(0);
+  });
+
+  it('still calls a zero expiry an expiry, and hands the screen a value it cannot misuse', async () => {
+    // An `expiresAt` of 0 is a legacy or hand-edited document, not the epoch. The verdict stays
+    // EXPIRED — the field really is not in the future — but the timestamp is meaningless, and
+    // the mapping is required to fall back to the plain sentence instead of computing
+    // "expired 56 years ago".
+    mockStore[KEY_PATH] = { ...unusedKey, expiresAt: 0 };
+    const r = await activate(KEY);
+    expect(r.code).toBe('EXPIRED');
+    expect(r.expiresAt).toBe(0);
+    expect(keyOutcomeMessage(keyOutcomeOfActivateResult(r))).toBe('This key has expired.');
   });
 });

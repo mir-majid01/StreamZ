@@ -1,15 +1,24 @@
 import type { ActivateCode } from '@/src/firebase/models';
+import { keyOutcomeMessage, type KeyState } from '@/src/firebase/subscriptions/keyOutcome';
 
-const ACTIVATION_COPY: Record<ActivateCode, string> = {
-  ACTIVATED: 'Subscription activated.',
-  ALREADY_OWNED: 'This subscription is already active on your device.',
-  NOT_FOUND: "This subscription key isn't valid.",
-  EXPIRED: 'This subscription key has expired.',
-  REVOKED: 'This subscription has been revoked.',
-  ALREADY_BOUND: 'This key is already linked to another account.',
-  CEILING: 'This subscription has reached its device-change limit. Contact support.',
-  UNAUTHENTICATED: 'Sign in before activating a key.',
-};
+/**
+ * Activation copy lives in `keyOutcome.ts`, not in a table here. A second table is how one
+ * sentence ("isn't valid") ended up covering a timeout, a rules refusal and a key that was
+ * merely unrecognised, and it is how the app would drift out of step with whatever the backend
+ * can actually distinguish. These functions are thin routes into that one mapping.
+ *
+ * `expiresAt` is optional so a caller that only has a code still gets the plain sentence, while
+ * a caller that also read the key's expiry gets "expired 3 days ago" out of the same function.
+ * Screens do not assemble these sentences themselves.
+ */
+export const describeActivation = (code: ActivateCode, expiresAt?: number | null): string =>
+  keyOutcomeMessage({
+    state: code as KeyState,
+    // The activation transaction only ever reads the key document, so an EXPIRED code is
+    // always the key's own expiry — never the account's.
+    expiryOwner: code === 'EXPIRED' ? 'key' : 'unknown',
+    expiresAt: expiresAt ?? null,
+  });
 
 const AUTH_COPY: Record<string, string> = {
   cancel: 'Sign-in was cancelled.',
@@ -32,20 +41,20 @@ const TRANSPORT_CODES = new Set([
   'unknown',
 ]);
 
-export const describeActivation = (code: ActivateCode): string =>
-  ACTIVATION_COPY[code] ?? "We couldn't activate that key. Contact support.";
-
 export function describeAuthError(code: string): string {
   return AUTH_COPY[code] ?? 'Sign-in failed. Please try again.';
 }
 
-const GENERIC_NETWORK =
-  "We couldn't verify your subscription. Check your connection and try again.";
-
+/**
+ * A Firestore error code, read the same way as every other key outcome. `permission-denied` is
+ * the rules refusing to answer — a fact about this device's reach, not about the key — so it is
+ * reported as a check that could not be completed instead of as "not found" or "invalid".
+ * Anything else in this bucket says the same thing with the network's reason.
+ */
 export function describeFirestoreError(code: string): string {
-  if (TRANSPORT_CODES.has(code)) return GENERIC_NETWORK;
-  if (code === 'permission-denied') return 'You are not allowed to do that. Contact support.';
-  return GENERIC_NETWORK;
+  return keyOutcomeMessage({
+    state: code === 'permission-denied' ? 'CHECK_REFUSED' : 'CHECK_UNREACHABLE',
+  });
 }
 
 /**

@@ -6,7 +6,12 @@ import {
   normalizeKeyBody,
 } from '@/src/firebase/subscriptions/keyFormat';
 import { decideGate, gateResetFor, routeFor, shouldRevalidate } from '@/src/firebase/subscriptions/gate';
-import { describeActivation, describeAuthError, isTransportError } from '@/src/firebase/errors';
+import {
+  describeActivation,
+  describeAuthError,
+  describeFirestoreError,
+  isTransportError,
+} from '@/src/firebase/errors';
 import { CONFIG_DEFAULTS, graceMsFrom, staleMsFrom, type AccessResult } from '@/src/firebase/models';
 
 const NOW = 1_000_000_000_000;
@@ -108,10 +113,26 @@ describe('error copy', () => {
       expect(message.length).toBeGreaterThan(12);
       expect(message).not.toMatch(/Firebase|firestore|functions|\[object|undefined/);
     }
-    expect(describeActivation('NOT_FOUND')).toMatch(/isn't valid/i);
     expect(describeActivation('ALREADY_BOUND')).toMatch(/another account/i);
     expect(describeActivation('EXPIRED')).toMatch(/expired/i);
     expect(describeActivation('REVOKED')).toMatch(/revoked/i);
+  });
+
+  it('reports an unrecognised key as unrecognised, never as invalid', () => {
+    // Reverses the old `NOT_FOUND` assertion, which demanded the wording "isn't valid". The
+    // app cannot tell a key that was never minted from one the rules hide from this caller —
+    // and closing that gap for a signed-in device would be a key-existence oracle over the
+    // whole keyspace — so the honest sentence is "we couldn't match it", and "invalid" is a
+    // claim the backend never made. The negative assertion is the point: it is what keeps a
+    // future edit from sliding back into the wording that hid the truth from users.
+    const notFound = describeActivation('NOT_FOUND');
+    expect(notFound).toMatch(/couldn't match|we're allowed to see/i);
+    expect(notFound).not.toMatch(/invalid|isn't valid|not valid|bogus|fake|expired|revoked/i);
+    // A transport failure and a rules refusal are not this sentence either.
+    expect(describeFirestoreError('unavailable')).not.toBe(notFound);
+    expect(describeFirestoreError('permission-denied')).not.toBe(notFound);
+    expect(describeFirestoreError('permission-denied')).toMatch(/completed|check/i);
+    expect(describeFirestoreError('permission-denied')).not.toMatch(/invalid|isn't valid/i);
   });
 
   it('separates cancellation from failure', () => {

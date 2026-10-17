@@ -41,9 +41,13 @@ import {
 import { BRAND } from '@/src/config/brand';
 import { AUTH, FONT, MARK_RAMP, SPACE } from '@/src/theme/tokens';
 import { formatKeyInput, looksPlausible, normalizeKeyBody } from '@/src/firebase/subscriptions/keyFormat';
-import { activate, isRulesRefusal, TransportError } from '@/src/firebase/subscriptions/api';
+import { activate } from '@/src/firebase/subscriptions/api';
 import { AppEvent, logAppEvent } from '@/src/firebase/analytics/appEvents';
-import { describeActivation, describeFirestoreError } from '@/src/firebase/errors';
+import {
+  keyOutcomeMessage,
+  keyOutcomeOfActivateResult,
+  keyOutcomeOfThrown,
+} from '@/src/firebase/subscriptions/keyOutcome';
 import { DAY_MS, type AccessResult } from '@/src/firebase/models';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
 import { signOut } from '@/src/firebase/auth/googleAuth';
@@ -128,18 +132,17 @@ export const SubscriptionScreen = () => {
         });
         return;
       }
-      setError(describeActivation(result.code));
+      // Every refusal, and only a refusal, goes through the one key-outcome mapping. The
+      // EXPIRED result carries the expiry the key document stated, which is what lets the
+      // same line say how long ago that was — or stay silent when the document had none.
+      setError(keyOutcomeMessage(keyOutcomeOfActivateResult(result)));
       setRefusals((n) => n + 1);
     } catch (e) {
-      setError(
-        e instanceof TransportError
-          ? "We couldn't verify your subscription. Check your connection and try again."
-          : isRulesRefusal(e)
-            // The rules refused the write. Retrying cannot help, and a vague message
-            // hides the one case where support can: a suspended account.
-            ? describeFirestoreError('permission-denied')
-            : 'Activation failed. Please try again.',
-      );
+      // A thrown value is not evidence about the key. It is either the transport failing
+      // (worth retrying, nothing learned), the rules refusing to answer (a real refusal, but a
+      // refusal to *read*, not a verdict on the key), or something unrecognised. All three say
+      // the check did not complete and offer a retry; none of them may borrow "invalid key".
+      setError(keyOutcomeMessage(keyOutcomeOfThrown(e)));
       setRefusals((n) => n + 1);
     } finally {
       setBusy(false);

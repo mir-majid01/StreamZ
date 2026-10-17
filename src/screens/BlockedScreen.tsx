@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Linking, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Clock, CloudOff, ShieldX, MessageCircle, Mail } from 'lucide-react-native';
+import { Clock, CloudOff, ShieldX, MessageCircle, Mail, type LucideIcon } from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
 import { HStack } from '@/components/ui/hstack';
 import { VStack } from '@/components/ui/vstack';
@@ -9,20 +9,51 @@ import { StreamZAmbient, StreamZButton, StreamZStateView, StreamZText } from '@/
 import { BRAND } from '@/src/config/brand';
 import { signOut } from '@/src/firebase/auth/googleAuth';
 import { useSession } from '@/src/firebase/auth/SessionProvider';
+import {
+  keyOutcomeMessage,
+  keyOutcomeOfGate,
+  type KeyState,
+} from '@/src/firebase/subscriptions/keyOutcome';
 
 const SUPPORT_SUBJECT = encodeURIComponent(`${BRAND.name} access`);
 
 /**
- * The designed dead ends (PRD §33, §41). A device past its grace window needs a
- * retry, not an apology; an expired key needs renewal; anything else negative
- * means the account itself was refused. Copy names no SDK, no collection, no
- * internals — the state is the message.
+ * The icon and the heading are this screen's own; the sentence under them is not, and comes
+ * from the same mapping as every other key outcome in the app. A state with no heading of its
+ * own gets the neutral one — never "Access Revoked", which this screen used to say to anybody
+ * it had no verdict for, including someone whose app had merely not finished checking.
+ */
+const HEADLINES: Partial<Record<KeyState, { icon: LucideIcon; title: string }>> & {
+  default: { icon: LucideIcon; title: string };
+} = {
+  CHECK_UNREACHABLE: { icon: CloudOff, title: 'Waiting for the server' },
+  CHECK_PENDING: { icon: CloudOff, title: 'Checking your subscription' },
+  CHECK_UNEXPECTED: { icon: CloudOff, title: 'Check did not finish' },
+  CHECK_REFUSED: { icon: ShieldX, title: 'Key could not be checked' },
+  VERDICT_UNUSABLE: { icon: CloudOff, title: 'Status unavailable' },
+  EXPIRED: { icon: Clock, title: 'Subscription Expired' },
+  REVOKED: { icon: ShieldX, title: 'Key Revoked' },
+  ACCOUNT_SUSPENDED: { icon: ShieldX, title: 'Account Suspended' },
+  ACCOUNT_DISABLED: { icon: ShieldX, title: 'Account Disabled' },
+  CEILING: { icon: ShieldX, title: 'Device Limit Reached' },
+  UNAUTHENTICATED: { icon: ShieldX, title: 'Not Signed In' },
+  default: { icon: ShieldX, title: 'Access Not Active' },
+};
+
+/**
+ * The designed dead ends (PRD §33, §41). A device past its grace window needs a retry, not an
+ * apology; an expired key needs renewal; a suspended account needs support. Copy names no SDK,
+ * no collection, no internals — and it is the same mapping the activation panel and the Settings
+ * account card read from, because this screen used to answer "Access Revoked" to everything,
+ * including a check that had not finished yet. A verdict the app does not have is not a revocation.
  */
 export const BlockedScreen = () => {
   const insets = useSafeAreaInsets();
   const { decision, access, refresh } = useSession();
   const [retrying, setRetrying] = useState(false);
-  const offline = decision === 'needsServerContact';
+
+  const outcome = keyOutcomeOfGate(decision, access);
+  const headline = HEADLINES[outcome.state] ?? HEADLINES.default;
 
   const onRetry = async () => {
     if (retrying) return;
@@ -41,25 +72,11 @@ export const BlockedScreen = () => {
         space="md"
         style={{ paddingBottom: insets.bottom + 24, paddingTop: insets.top + 24 }}
       >
-        {offline ? (
-          <StreamZStateView
-            icon={CloudOff}
-            title="You're offline"
-            message={`${BRAND.name} needs to reach its server before it can open your library. Check your connection and try again.`}
-          />
-        ) : access?.status === 'expired' ? (
-          <StreamZStateView
-            icon={Clock}
-            title="Subscription Expired"
-            message="Your subscription has run out. Enter a new key or contact support to renew."
-          />
-        ) : (
-          <StreamZStateView
-            icon={ShieldX}
-            title="Access Revoked"
-            message="This subscription is no longer active on this account. Contact support if you believe this is a mistake."
-          />
-        )}
+        <StreamZStateView
+          icon={headline.icon}
+          title={headline.title}
+          message={keyOutcomeMessage(outcome)}
+        />
 
         <VStack space="sm" className="px-8">
           <StreamZButton

@@ -46,14 +46,36 @@ export type GateDecision =
   | 'needsServerContact'
   | 'blocked';
 
+/**
+ * Which document an expiry was read from. The key and the account expire independently — the
+ * key document has its own `expiresAt`, `users/{uid}` has another, and `validate()` honours the
+ * earlier of the two — so "expired" on its own does not say what actually ran out. Copy that
+ * blames the key for an account-side expiry is a claim about somebody's money, so the source
+ * travels with the verdict instead of being guessed at the screen.
+ *
+ * `both` is the honest answer when the two documents carry the same instant, and `unknown` the
+ * honest answer when the verdict was reached without reading a timestamp at all (a staff-set
+ * `status: 'EXPIRED'` on a key that never recorded one, for instance).
+ */
+export type ExpiryOwner = 'key' | 'account' | 'both' | 'unknown';
+
 export interface AccessResult {
   status: AccessStatus;
   expiresAt: number | null;
   serverTimeMs: number;
+  /** Present whenever `expiresAt` came from one of the two documents rather than being absent. */
+  expiryOwner?: ExpiryOwner;
 }
 
 export interface ActivateResult {
   code: ActivateCode;
+  /**
+   * For `ACTIVATED` and `ALREADY_OWNED`, the expiry that is now in force. For an `EXPIRED`
+   * refusal, the key document's own `expiresAt`, which is the fact the refusal was based on and
+   * the only thing that lets the app say how long ago that was. Null when no expiry is stated by
+   * either document, and null for the refusals that have nothing to do with time. Never a
+   * client-supplied or invented value.
+   */
   expiresAt: number | null;
   /**
    * The length of the term in days, so a client can show how much of it is left rather
