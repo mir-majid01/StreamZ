@@ -16,6 +16,12 @@ export interface StreamflixLoadingSource {
   name: string;
   /** The provider's own label for this server's audio language, if it claims one. */
   language?: string;
+  /**
+   * Developer-only: the scorer's breakdown for this candidate, already formatted
+   * ("420 · url:url_now · audio:claimed English · subs:0 · fmt:hls · prior:+50").
+   * Set only when the caller is showing diagnostics, never in normal use.
+   */
+  detail?: string;
 }
 
 interface ServerLoadingSideNavProps {
@@ -34,13 +40,20 @@ interface ServerLoadingSideNavProps {
 }
 
 /**
- * Always-visible (no scrim, no open/close state) right-docked server list
- * shown while `PlayerScreen` is resolving a stream — `PlayerCore` (and so
- * `PlayerSettingsDrawer`'s own server picker) isn't mounted yet at this
- * point, so this is the only way to switch servers before either a stream
- * resolves or every server has been auto-failed-over through. Deliberately
- * narrower than the settings drawer and without its backdrop, so it doesn't
- * cover the centered "Finding stream…" spinner/text.
+ * Right-docked list of the servers and the resolved sources the resolver is
+ * working through, with a per-source score breakdown — i.e. the diagnostics of a
+ * stream hunt, in the user's language of "which host is doing what".
+ *
+ * It is therefore a *developer-only* surface: `PlayerScreen` mounts it solely
+ * when the resolver debug switch is on in Settings > Playback, because naming
+ * providers and their claimed languages in front of a user waiting for playback
+ * is not something they asked for. `PlayerCore`'s own server/source pickers are
+ * the user-facing way to change what plays, once something is playing.
+ *
+ * Internally it stays always-visible while mounted (no scrim, no open/close
+ * state, just the optional debug Hide chip), which is what makes it usable while
+ * `PlayerCore` — and so `PlayerSettingsDrawer`'s server picker — does not exist
+ * yet.
  */
 export const ServerLoadingSideNav = ({
   servers,
@@ -185,6 +198,12 @@ export const ServerLoadingSideNav = ({
                       </Text>
                     ) : null}
                   </HStack>
+                  {s.detail ? (
+                    // Developer-only: why the scorer put this candidate here.
+                    <Text size="2xs" className="pt-1 text-muted-foreground">
+                      {s.detail}
+                    </Text>
+                  ) : null}
                 </Focusable>
               );
             })}

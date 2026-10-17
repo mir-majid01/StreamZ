@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StatusBar, StyleSheet } from 'react-native';
-import { ArrowLeft, VideoOff } from 'lucide-react-native';
+import { Platform, Pressable, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, RefreshCw, VideoOff } from 'lucide-react-native';
 import { useKeepAwake } from 'expo-keep-awake';
 import { NavigationBar } from 'expo-navigation-bar';
 import type { ReactVideoSource } from 'react-native-video';
 import { Box } from '@/components/ui/box';
 import { Center } from '@/components/ui/center';
+import { HStack } from '@/components/ui/hstack';
 import { Icon } from '@/components/ui/icon';
 import { Spinner } from '@/components/ui/spinner';
 import { Text } from '@/components/ui/text';
@@ -15,6 +17,7 @@ import {
   ToastTitle,
   useToast,
 } from '@/components/ui/toast';
+import { Focusable } from '@/src/components/Focusable';
 import { PlayerCore } from '@/src/components/player/PlayerCore';
 import { ServerLoadingSideNav } from '@/src/components/player/ServerLoadingSideNav';
 import {
@@ -54,6 +57,13 @@ import {
   withinBudget,
   type FailureReason,
 } from '@/src/utils/sourceResolution';
+import {
+  formatScoreBreakdown,
+  onDemandSourceType,
+  rankSources,
+  type RankedSource,
+} from '@/src/utils/sourceRanking';
+import { TV_FOCUS_BORDER_CLASSNAME } from '@/src/utils/tv';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 import { useWatchParty } from '@/src/hooks/useWatchParty';
 import {
@@ -75,6 +85,27 @@ import {
  * extraction can make so a merely slow host is not cut off.
  */
 const RESOLVE_CANDIDATE_BUDGET_MS = 60_000;
+
+/**
+ * Wall-clock budget for the *listing* call, which until now had none.
+ *
+ * `StreamflixService.listSources` is not one request: `listVidrock` issues one
+ * request per returned server (`pickAtlasMp4`) after the movie/episode lookup,
+ * each individually aborted at 15s by `streamflixFetch`, so a slow host with
+ * eight entries can hold this screen for over two minutes while the user watches
+ * a spinner. 30s is the point where that stops being worth waiting for: the
+ * Vidrock lookup alone gets its full 15s, plus one more round trip's worth, and
+ * the Videasy/Vidzee candidates — which need no network at all to be listed —
+ * are no longer starved behind a wedged CDN. FlixQuest's own single call is
+ * capped at 60s internally, so this app-level bound is deliberately the tighter
+ * of the two: the screen's budget is what the user experiences.
+ *
+ * Per-candidate *extraction* keeps its own, separate budget above.
+ */
+const LIST_SOURCES_BUDGET_MS = 30_000;
+
+/** Width of the developer-only `ServerLoadingSideNav` rail, so text can dodge it. */
+const DEV_NAV_RAIL_WIDTH = 256;
 
 /**
  * How long to wait after a URL is handed to the player for the player to prove
@@ -129,6 +160,10 @@ export const PlayerScreen = ({
   // ("Resolver view"); off is the normal path.
   const { scraperDebugEnabled, smartPlayEnabled } = usePlayerDebugSettings();
   const toast = useToast();
+  // The pre-playback screen is full-bleed landscape, so its centred block has to
+  // be inset by the notch/cutout and dodge the back arrow — "centred" is not the
+  // same as "readable" on a device with a pill.
+  const insets = useSafeAreaInsets();
   const type: 'movie' | 'tv' = item.media_type === 'tv' ? 'tv' : 'movie';
 
   // Episode-switching state: lifted here so the drawer can drive re-scraping
@@ -422,6 +457,7 @@ export const PlayerScreen = ({
       setTryingStreamflixSource(null);
       setPreferredStreamflixSourceId(null);
       setStreamflixSources([]);
+      setSourceRanking([]);
       setActiveStreamflixSourceId(null);
       setExtractorSubtitles([]);
       resolvedRef.current = false;
@@ -495,6 +531,14 @@ export const PlayerScreen = ({
   const [streamflixSources, setStreamflixSources] = useState<StreamflixSource[]>(
     [],
   );
+  /**
+   * The scorer's per-candidate breakdown for the current listing, kept only so
+   * the developer-only rail can say *why* a source sits where it does. Nothing
+   * on the normal path reads it.
+   */
+  const [sourceRanking, setSourceRanking] = useState<
+    RankedSource<StreamflixSource>[]
+  >([]);
   const [activeStreamflixSourceId, setActiveStreamflixSourceId] = useState<
     string | null
   >(null);
@@ -532,7 +576,14 @@ export const PlayerScreen = ({
     (resolved: StreamflixSource) => {
       finish({
         uri: resolved.uri,
-        type: resolved.kind === 'hls' ? 'm3u8' : undefined,
+        // The player-facing hint comes from the URL, not from `resolved.kind`.
+        // `kind` is the `'hls' | 'file'` union that `DownloadService` and the
+        // party protocol consume, and both FlixQuest (`kindOf`) and Vidrock fold
+        // DASH into `'hls'` — so a `.mpd` filed as `'hls'` used to be handed to
+        // the HLS parser and failed as a malformed playlist. Same reasoning the
+        // live path now uses; progressive files still get no hint at all, so the
+        // player infers them.
+        type: onDemandSourceType(resolved.uri),
         headers: resolved.headers ?? playbackHeadersFor(activeServer),
       });
       setActiveStreamflixSourceId(resolved.id);
@@ -554,6 +605,23 @@ export const PlayerScreen = ({
     publishHostSource(uri, undefined, activeStreamflixSourceId ?? undefined);
   }, [source, publishHostSource, activeStreamflixSourceId]);
 
+  // Latest-value refs for the three callbacks the resolver calls. They are
+  // deliberately *not* dependencies of the effect below. Their identities change
+  // with failover bookkeeping — `onScrapeError` → `tryNextServer` →
+  // `triedServerIds` state, `playResolvedSource` → `publishHostSource` — and
+  // because the effect guards on "nothing resolved yet", every such change mid
+  // attempt cancelled the in-flight listing and re-ran `listSources` from zero.
+  // Reading the newest callback at call time is the smaller correct change: same
+  // behaviour, no restart. Stabilising the callbacks instead would mean taking
+  // `triedServerIds` (state the developer rail renders) out of `tryNextServer`'s
+  // inputs, which is a larger change to failover than this bug needs.
+  const playResolvedSourceRef = useRef(playResolvedSource);
+  playResolvedSourceRef.current = playResolvedSource;
+  const onScrapeErrorRef = useRef(onScrapeError);
+  onScrapeErrorRef.current = onScrapeError;
+  const markTriedStreamflixRef = useRef(markTriedStreamflix);
+  markTriedStreamflixRef.current = markTriedStreamflix;
+
   useEffect(() => {
     if (playingDownloaded) return;
     if (resolvedRef.current || source || noSource || waitingForHost) return;
@@ -563,43 +631,67 @@ export const PlayerScreen = ({
     // moment the id lands. FlixQuest never uses it and starts immediately.
     if (usingStreamflix && !imdbSettled) return;
     let cancelled = false;
+    const providerTag = usingFlixquest ? '[FlixQuest]' : '[Streamflix]';
     const run = async () => {
       try {
-        const listed = usingFlixquest
-          ? await FlixQuestService.listSources({
-              providerId:
-                activeServer.scraperProviderId ||
-                activeServer.id.replace(FLIXQUEST_SERVER_PREFIX, ''),
-              tmdbId: item.id,
-              mediaType: type,
-              season,
-              episode,
-            })
-          : await StreamflixService.listSources({
-              tmdbId: item.id,
-              mediaType: type,
-              season,
-              episode,
-              title: getTitle(item),
-              year,
-              imdbId,
-            });
+        // Bounded end to end: a listing that cannot answer inside
+        // `LIST_SOURCES_BUDGET_MS` is failed over like any other failure,
+        // instead of leaving this screen on a spinner indefinitely.
+        const listed = await withinBudget(
+          () =>
+            usingFlixquest
+              ? FlixQuestService.listSources({
+                  providerId:
+                    activeServer.scraperProviderId ||
+                    activeServer.id.replace(FLIXQUEST_SERVER_PREFIX, ''),
+                  tmdbId: item.id,
+                  mediaType: type,
+                  season,
+                  episode,
+                })
+              : StreamflixService.listSources({
+                  tmdbId: item.id,
+                  mediaType: type,
+                  season,
+                  episode,
+                  title: getTitle(item),
+                  year,
+                  imdbId,
+                }),
+          LIST_SOURCES_BUDGET_MS,
+        );
         if (cancelled || resolvedRef.current) return;
-        setStreamflixSources(listed);
+        // Deterministic best-first order, from `rankSources`: same candidates
+        // always produce the same order, whatever order the host returned them
+        // in. The stored list *is* the ranked list, so in-player failover and the
+        // source picker walk candidates in the same order the resolver does.
+        const ranked = rankSources(listed, { platform: Platform.OS });
+        setSourceRanking(ranked);
+        const ordered = ranked.map((entry) => entry.source);
+        setStreamflixSources(ordered);
         if (!listed.length) {
-          onScrapeError();
+          onScrapeErrorRef.current();
           return;
         }
-        const preferred =
-          listed.find((s) => s.id === preferredStreamflixSourceId) ?? listed[0];
-        // The order is the host's own listing, with the chosen source first.
-        // Nothing is re-ranked by claimed quality/resolution/language, because
-        // no verified per-source signal exists for these providers to rank on.
-        const order = (
-          smartPlayEnabled
-            ? [preferred, ...listed.filter((s) => s.id !== preferred.id)]
-            : [preferred]
-        ).filter((s) => !triedStreamflixIdsRef.current.has(s.id));
+        // An explicit user pick wins outright — ranking never overrides a choice
+        // the user actually made. Without one, the top-ranked candidate leads;
+        // with Smart Play off, that one candidate is the whole attempt.
+        const picked = preferredStreamflixSourceId
+          ? ordered.find((s) => s.id === preferredStreamflixSourceId)
+          : undefined;
+        const lead = picked ?? ordered[0];
+        const attempted = !smartPlayEnabled
+          ? lead
+            ? [lead]
+            : []
+          : picked
+            ? [picked, ...ordered.filter((s) => s.id !== picked.id)]
+            : ordered;
+        // Then the failover bookkeeping, unchanged: a candidate that already
+        // yielded nothing for this target does not get a second turn.
+        const order = attempted.filter(
+          (s) => !triedStreamflixIdsRef.current.has(s.id),
+        );
         for (const candidate of order) {
           if (cancelled || resolvedRef.current) return;
           setTryingStreamflixSource({ id: candidate.id, name: candidate.name });
@@ -616,31 +708,38 @@ export const PlayerScreen = ({
             // Anything other than running out of budget keeps failing over at
             // the server level, exactly as before.
             if (!isBudgetFailure(error)) throw error;
-            // One wedged host must not end the whole attempt: name it, skip
-            // it, and give the next candidate its turn.
+            // One wedged host must not end the whole attempt: skip it and give
+            // the next candidate its turn. The name is recorded for the developer
+            // rail only — no user-facing copy repeats a provider name.
             // eslint-disable-next-line no-console
-            console.log('[Streamflix]', 'player: budget exceeded by', candidate.name);
+            console.log(
+              providerTag,
+              'player: budget exceeded by',
+              candidate.name,
+            );
             setLastFailure({ label: candidate.name, reason: 'timed_out' });
-            markTriedStreamflix(candidate.id);
+            markTriedStreamflixRef.current(candidate.id);
             continue;
           }
           if (cancelled || resolvedRef.current) return;
           if (resolved?.uri) {
             setTryingStreamflixSource(null);
-            playResolvedSource(resolved);
+            playResolvedSourceRef.current(resolved);
             return;
           }
-          markTriedStreamflix(candidate.id);
+          markTriedStreamflixRef.current(candidate.id);
         }
-        onScrapeError();
+        onScrapeErrorRef.current();
       } catch (error) {
         // eslint-disable-next-line no-console
-        console.log(
-          usingFlixquest ? '[FlixQuest]' : '[Streamflix]',
-          'player: error',
-          friendlyScraperError(error),
-        );
-        if (!cancelled && !resolvedRef.current) onScrapeError();
+        console.log(providerTag, 'player: error', friendlyScraperError(error));
+        if (isBudgetFailure(error)) {
+          // The listing itself ran out of budget. Recorded without a label:
+          // there is no single candidate to blame, and naming the provider here
+          // is exactly what this screen must stop doing.
+          setLastFailure({ label: null, reason: 'timed_out' });
+        }
+        if (!cancelled && !resolvedRef.current) onScrapeErrorRef.current();
       }
     };
     void run();
@@ -665,9 +764,6 @@ export const PlayerScreen = ({
     year,
     imdbId,
     preferredStreamflixSourceId,
-    playResolvedSource,
-    onScrapeError,
-    markTriedStreamflix,
   ]);
 
   const handleSelectStreamflixSource = useCallback(
@@ -776,27 +872,63 @@ export const PlayerScreen = ({
   ]);
 
   /**
-   * What the waiting screen says. The candidate that just gave up is named only
-   * when this wait is its retry, so a first attempt never looks like a recovery
-   * from a failure that did not happen.
+   * The secondary line on the pre-playback screen.
+   *
+   * It describes progress, not provenance. The old version named the candidate
+   * the resolver was on ("Trying Nflix (Vidzee)…") and the server being failed
+   * over to, which put provider names in front of every user on the screen that
+   * was supposed to look like the app simply playing something. Names are still
+   * recorded in `lastFailure` / `tryingStreamflixSource` for the developer-only
+   * rail; they are just no longer what this line says.
    */
-  const waitingLabel = useMemo(() => {
-    const current =
-      tryingStreamflixSource?.name ??
-      (triedServerIds.size ? activeServer.name : null);
-    if (!current) return 'Finding stream…';
-    if (lastFailure && lastFailure.label !== current) {
+  const progressLine = useMemo(() => {
+    if (lastFailure) {
       const why =
-        lastFailure.reason === 'timed_out' ? 'timed out' : 'could not play';
-      return `${lastFailure.label ?? 'The previous source'} ${why} — trying ${current}…`;
+        lastFailure.reason === 'timed_out' ? 'timed out' : 'did not start';
+      return `The last attempt ${why} — trying another source…`;
     }
-    return `Trying ${current}…`;
-  }, [
-    tryingStreamflixSource,
-    triedServerIds.size,
-    activeServer.name,
-    lastFailure,
-  ]);
+    if (stage === 'resolving') return 'Opening a source…';
+    if (streamflixSources.length > 0) {
+      return `Found ${streamflixSources.length} source${
+        streamflixSources.length === 1 ? '' : 's'
+      } — choosing the best match…`;
+    }
+    if (triedServerIds.size > 0) return 'Trying your next server…';
+    return 'Looking for something that plays…';
+  }, [lastFailure, stage, streamflixSources.length, triedServerIds.size]);
+
+  /**
+   * Per-candidate "why is it in this order" strings, read only by the
+   * developer-only rail. Built from the scorer's breakdown so a developer can see
+   * the signals behind a pick without adding a second, drifting copy of the rules.
+   */
+  const rankingDetailById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of sourceRanking) {
+      map.set(entry.source.id, formatScoreBreakdown(entry.score));
+    }
+    return map;
+  }, [sourceRanking]);
+
+  /**
+   * Retry from a clean slate after every candidate and server gave up. Without
+   * this the failure screen's only exit was Back, and the rule for this flow is
+   * "a clear error with a retry", not an apology the user has to leave.
+   */
+  const handleRetry = useCallback(() => {
+    setTriedServerIds(new Set());
+    resetTriedStreamflix();
+    setPreferredStreamflixSourceId(null);
+    setStreamflixSources([]);
+    setSourceRanking([]);
+    setActiveStreamflixSourceId(null);
+    setExtractorSubtitles([]);
+    setLastFailure(null);
+    resolvedRef.current = false;
+    setSource(null);
+    setNoSource(false);
+    setDebugStreamFound(false);
+  }, [resetTriedStreamflix]);
 
   // Switch to a different episode without recreating the whole player screen:
   // reset the resolved source so `WebViewScraper` re-runs with new params, and
@@ -809,6 +941,7 @@ export const PlayerScreen = ({
       resetTriedStreamflix();
       setPreferredStreamflixSourceId(null);
       setStreamflixSources([]);
+      setSourceRanking([]);
       setActiveStreamflixSourceId(null);
       setExtractorSubtitles([]);
       resolvedRef.current = false;
@@ -834,6 +967,7 @@ export const PlayerScreen = ({
       resetTriedStreamflix();
       setPreferredStreamflixSourceId(null);
       setStreamflixSources([]);
+      setSourceRanking([]);
       setActiveStreamflixSourceId(null);
       setExtractorSubtitles([]);
       resolvedRef.current = false;
@@ -854,6 +988,7 @@ export const PlayerScreen = ({
     resetTriedStreamflix();
     setPreferredStreamflixSourceId(null);
     setStreamflixSources([]);
+    setSourceRanking([]);
     setActiveStreamflixSourceId(null);
     setExtractorSubtitles([]);
     resolvedRef.current = false;
@@ -954,6 +1089,20 @@ export const PlayerScreen = ({
     navigation.goBack();
   }, [navigation]);
 
+  /**
+   * Identity of the currently mounted Player. Bumped on mount, invalidated on
+   * teardown, so anything that awaited the network on this instance's behalf can
+   * tell whether the screen it was going to navigate is still the one on screen.
+   */
+  const resolutionEpochRef = useRef(0);
+  useEffect(() => {
+    const epoch = resolutionEpochRef.current + 1;
+    resolutionEpochRef.current = epoch;
+    return () => {
+      if (resolutionEpochRef.current === epoch) resolutionEpochRef.current = 0;
+    };
+  }, []);
+
   const handlePlayRecommendation = useCallback(
     async (next: MediaItem) => {
       if (isMovie(next)) {
@@ -963,9 +1112,22 @@ export const PlayerScreen = ({
         });
         return;
       }
+      // Captured before the network hop: `resolveFirstAiredEpisode` is a TMDB
+      // lookup with no bound of its own, and until now whatever it answered with
+      // called `navigation.replace` unconditionally — so a recommendation tapped
+      // moments ago could pull the user into a title they had already left, or
+      // replace a screen that had since become someone else's. Both the epoch
+      // (this instance is gone) and focus (the user went elsewhere in the stack)
+      // have to still say "this Player is the thing on screen" before navigating.
+      const epoch = resolutionEpochRef.current;
       try {
         const first = await resolveFirstAiredEpisode(next);
         if (!first) return;
+        if (epoch !== resolutionEpochRef.current || !navigation.isFocused()) {
+          // eslint-disable-next-line no-console
+          console.log('[Player]', 'stale recommendation dropped');
+          return;
+        }
         navigation.replace('Player', {
           item: next,
           title: `${getTitle(next)} — ${first.episode.name}`,
@@ -1050,7 +1212,15 @@ export const PlayerScreen = ({
     return (
       <Box className="flex-1 bg-black">
         <StatusBar hidden />
-        <Center className="flex-1 px-8">
+        <Center
+          className="flex-1"
+          style={{
+            paddingTop: insets.top + 16,
+            paddingBottom: insets.bottom + 16,
+            paddingLeft: insets.left + 72,
+            paddingRight: insets.right + 16,
+          }}
+        >
           <Icon
             as={VideoOff}
             size="xl"
@@ -1061,13 +1231,29 @@ export const PlayerScreen = ({
           </Text>
           <Text size="sm" className="mt-2 text-center text-muted-foreground">
             {!smartPlayEnabled
-              ? `We couldn't play this from ${activeServer.name}. Smart Play is off, so no other server was tried — switch server in Settings or turn Smart Play on.`
+              ? "We couldn't play this from the server you chose. Smart Play is off, so nothing else was tried — switch server in Settings, or turn Smart Play on."
               : lastFailure
-                ? 'Some servers returned a stream, but none of them started playing.'
+                ? 'Some sources were found, but none of them started playing.'
                 : servers.length > 1
                   ? "We couldn't find a playable stream from any configured server."
                   : "We couldn't find a playable stream from the current server. Try a different server from Settings."}
           </Text>
+          {/* A failure this screen cannot recover from on its own still has to
+              offer a retry, not just a way out — otherwise the only answer to
+              "everything failed" is to leave and tap Play again. */}
+          <Focusable
+            onPress={handleRetry}
+            hasTVPreferredFocus
+            className="mt-6 rounded-full border border-border bg-card/95 px-5 py-3"
+            focusedClassName={TV_FOCUS_BORDER_CLASSNAME}
+          >
+            <HStack space="xs" className="items-center">
+              <Icon as={RefreshCw} size="sm" className="text-foreground" />
+              <Text size="sm" className="text-foreground">
+                Try again
+              </Text>
+            </HStack>
+          </Focusable>
         </Center>
         <Pressable
           onPress={() => navigation.goBack()}
@@ -1079,6 +1265,11 @@ export const PlayerScreen = ({
       </Box>
     );
   }
+
+  // The provider/source rail is developer diagnostics: it only mounts when the
+  // resolver debug switch is explicitly on in Settings > Playback. Normal use
+  // gets the clean full-screen state below, where no provider name can appear.
+  const devRailVisible = scraperDebugEnabled && !playingDownloaded;
 
   return (
     <Box className="flex-1 bg-black">
@@ -1103,14 +1294,12 @@ export const PlayerScreen = ({
           timeoutSeconds={activeServer.scraperTimeoutSeconds}
         />
       )}
-      {/* Once a retry has kicked in (some earlier server already failed
-          this cycle), name the server currently being tried so a
-          multi-server failover isn't a silent, confusing wait. */}
       {scraperDebugEnabled && !usingRestResolver ? (
         // Debug: keep the WebView visible/interactive — once a stream is
         // found we deliberately keep showing it (see `onExtracted`) instead
         // of switching to the native player, so the page keeps playing the
-        // video itself. Just a small status badge on top.
+        // video itself. Just a small status badge on top. Debug-only, so this
+        // one badge is allowed to name the server it is waiting on.
         <Center
           className="absolute bottom-6 self-center rounded-full bg-black/80 px-4 py-2"
           pointerEvents="none"
@@ -1122,12 +1311,29 @@ export const PlayerScreen = ({
           </Text>
         </Center>
       ) : (
-        <Center style={StyleSheet.absoluteFill} className="bg-black">
+        <Center
+          className="flex-1"
+          style={{
+            paddingTop: insets.top + 16,
+            paddingBottom: insets.bottom + 16,
+            // Clear the back arrow on the left, and the diagnostics rail on the
+            // right when it is up: "centred" only reads as centred inside the
+            // area the user can actually see.
+            paddingLeft: insets.left + 72,
+            paddingRight:
+              insets.right + (devRailVisible ? DEV_NAV_RAIL_WIDTH + 16 : 16),
+          }}
+        >
           <Spinner size="large" color="#E50914" />
-          <Text className="mt-4 text-muted-foreground">{waitingLabel}</Text>
+          <Text size="lg" bold className="mt-4 text-center text-foreground">
+            Preparing playback…
+          </Text>
+          <Text size="sm" className="mt-2 text-center text-muted-foreground">
+            {progressLine}
+          </Text>
         </Center>
       )}
-      {!playingDownloaded && (
+      {devRailVisible && (
         <ServerLoadingSideNav
           servers={servers}
           activeServerId={activeServer.id}
@@ -1135,7 +1341,16 @@ export const PlayerScreen = ({
           onSelectServer={(id) =>
             handleSelectServer(id, effectiveResumeFrom ?? 0)
           }
-          streamflixSources={usingRestResolver ? streamflixSources : []}
+          streamflixSources={
+            usingRestResolver
+              ? streamflixSources.map((s) => ({
+                  id: s.id,
+                  name: s.name,
+                  language: s.language,
+                  detail: rankingDetailById.get(s.id),
+                }))
+              : []
+          }
           tryingStreamflixSourceId={tryingStreamflixSource?.id ?? null}
           triedStreamflixIds={triedStreamflixIds}
           onSelectStreamflixSource={
