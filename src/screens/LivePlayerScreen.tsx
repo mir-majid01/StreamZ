@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, Pressable, StatusBar, StyleSheet, useWindowDimensions } from 'react-native';
+import { Pressable, StatusBar, StyleSheet, useWindowDimensions } from 'react-native';
 import Video, { type ReactVideoSource } from 'react-native-video';
 import { useKeepAwake } from 'expo-keep-awake';
-import { NavigationBar } from 'expo-navigation-bar';
 import { ArrowLeft, VideoOff } from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
 import { Center } from '@/components/ui/center';
@@ -14,6 +13,7 @@ import { Button, ButtonText } from '@/components/ui/button';
 import { PlayerControls } from '@/src/components/player/PlayerControls';
 import { LivePlayerChannelDrawer } from '@/src/components/player/LivePlayerChannelDrawer';
 import { useControlsVisibility } from '@/src/components/player/useControlsVisibility';
+import { useImmersivePlayerChrome } from '@/src/components/player/useImmersivePlayerChrome';
 import { useTVRemote } from '@/src/components/player/useTVRemote';
 import {
   DaddyLiveService,
@@ -34,7 +34,6 @@ import {
 } from '@/src/services/liveTv/playbackFailure';
 import { probeStream, type StreamProbeResult } from '@/src/services/liveTv/streamProbe';
 import { FONT } from '@/src/theme/tokens';
-import { forceLandscape, restoreOrientation } from '@/src/utils/orientation';
 import { isTV } from '@/src/utils/tv';
 import type { RootStackScreenProps } from '@/src/navigation/types';
 
@@ -101,11 +100,12 @@ export const LivePlayerScreen = ({
   const overlayOpen = channelsOpen;
   const { visible, show, toggle } = useControlsVisibility(!paused, overlayOpen);
 
+  // The window itself (landscape, hidden system bars, and giving both back on the way out) is
+  // owned by the shared hook, because the same chrome is what made the tab bar jump after a movie
+  // and after a live channel: see `useImmersivePlayerChrome`.
+  useImmersivePlayerChrome(navigation);
+
   useEffect(() => {
-    forceLandscape();
-    if (Platform.OS === 'android') {
-      NavigationBar.setHidden(true);
-    }
     return () => {
       mountedRef.current = false;
       if (retryTimerRef.current !== null) {
@@ -121,13 +121,6 @@ export const LivePlayerScreen = ({
         } catch {
           // Nothing to clean up if the abort itself failed.
         }
-      }
-      restoreOrientation();
-      if (Platform.OS === 'android') {
-        NavigationBar.setHidden(false);
-        // See PlayerScreen: the declarative <StatusBar hidden/> can leave the
-        // bar hidden after unmount on Android, zeroing insets.top downstream.
-        StatusBar.setHidden(false, 'fade');
       }
     };
   }, []);

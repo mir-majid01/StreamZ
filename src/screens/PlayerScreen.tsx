@@ -3,7 +3,6 @@ import { Platform, Pressable, StatusBar } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ArrowLeft, RefreshCw, VideoOff } from 'lucide-react-native';
 import { useKeepAwake } from 'expo-keep-awake';
-import { NavigationBar } from 'expo-navigation-bar';
 import type { ReactVideoSource } from 'react-native-video';
 import { Box } from '@/components/ui/box';
 import { Center } from '@/components/ui/center';
@@ -19,6 +18,7 @@ import {
 } from '@/components/ui/toast';
 import { Focusable } from '@/src/components/Focusable';
 import { PlayerCore } from '@/src/components/player/PlayerCore';
+import { useImmersivePlayerChrome } from '@/src/components/player/useImmersivePlayerChrome';
 import { ServerLoadingSideNav } from '@/src/components/player/ServerLoadingSideNav';
 import {
   WebViewScraper,
@@ -28,7 +28,6 @@ import { useServers } from '@/src/hooks/useServers';
 import { useDownloads } from '@/src/hooks/useDownloads';
 import { usePlayerDebugSettings } from '@/src/hooks/usePlayerDebugSettings';
 import { TMDBService } from '@/src/services/TMDBService';
-import { forceLandscape, restoreOrientation } from '@/src/utils/orientation';
 import { buildEmbedUrl } from '@/src/utils/streamUrl';
 import { playbackHeadersFor } from '@/src/services/playbackHeaders';
 import {
@@ -259,26 +258,7 @@ export const PlayerScreen = ({
     };
   }, [item.id, type]);
 
-  // Orientation: hard-force landscape for the player; restore on leave.
-  // Also hide the Android navigation bar for immersive playback.
-  useEffect(() => {
-    forceLandscape();
-    if (Platform.OS === 'android') {
-      NavigationBar.setHidden(true);
-    }
-    return () => {
-      restoreOrientation();
-      if (Platform.OS === 'android') {
-        NavigationBar.setHidden(false);
-        // Un-hide the status bar imperatively. The declarative <StatusBar
-        // hidden/> above *should* restore on unmount, but on Android its
-        // hidden state can survive the pop, leaving insets.top === 0 and
-        // shifting the Home header/tab bar up. Setting it false here is the
-        // same effect the rest of the app already gets from expo-status-bar.
-        StatusBar.setHidden(false, 'fade');
-      }
-    };
-  }, []);
+  useImmersivePlayerChrome(navigation);
 
   const finish = useCallback((s: ReactVideoSource) => {
     if (resolvedRef.current) return;
