@@ -29,7 +29,6 @@ export type RootStackParamList = {
   JoinParty: { code?: string };
   LivePlayer: {
     channel: LiveChannel;
-    channels: LiveChannel[];
     stream?: LiveStream;
   };
   Player: {

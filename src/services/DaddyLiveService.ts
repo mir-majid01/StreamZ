@@ -9,6 +9,7 @@ import {
   rankCategories,
   toLiveChannel,
 } from '@/src/services/liveTv/liveChannelMapper';
+import { appendUniqueChannels } from '@/src/services/liveTv/channelIndex';
 
 const TAG = '[LiveTV]';
 // eslint-disable-next-line no-console
@@ -511,6 +512,15 @@ const rememberCatalog = (catalog: LiveCatalog): void => {
   lastCatalog = catalog.channels;
 };
 
+/**
+ * The catalogue this service last produced, read from memory.
+ *
+ * The merged Live TV list is ~12.5k channels. Passing it through navigation params pinned
+ * every entry for the whole lifetime of the stack entry and let the player hand all of them
+ * to one list at once, so screens that need the list take it from here instead.
+ */
+const getPlaylistCatalogue = (): LiveChannel[] => lastCatalog ?? [];
+
 const readCachedCatalog = async (): Promise<LiveCatalog | null> => {
   try {
     const raw = await AsyncStorage.getItem(CATALOG_CACHE_KEY);
@@ -593,7 +603,7 @@ const findPlaylistStreamUrl = async (channelId: string): Promise<string | null> 
   if (fromMemory) return fromMemory;
   try {
     const channels = await fetchPlaylistChannels();
-    lastCatalog = [...(lastCatalog ?? []), ...channels];
+    lastCatalog = appendUniqueChannels(lastCatalog ?? [], channels);
     return channels.find((c) => c.id === channelId)?.streamUrl ?? null;
   } catch {
     return null;
@@ -700,4 +710,5 @@ export const DaddyLiveService = {
   getRecents,
   pushRecent,
   readCachedCatalog,
+  getPlaylistCatalogue,
 };

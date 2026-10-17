@@ -183,6 +183,9 @@ const toAndroidBufferConfig = (forwardBufferSeconds: number): BufferConfig => {
 
 type PlaybackStatus = 'loading' | 'ready' | 'error';
 
+/** Prefix on a subtitle picker id that came from the stream rather than a sidecar file. */
+const EMBEDDED_PREFIX = 'embedded:';
+
 /**
  * Owns the react-native-video player instance and all playback UI. Created
  * once with a final, resolved source so the player is never recreated
@@ -316,6 +319,11 @@ export const PlayerCore = ({
     [audioTracks, selectedAudioIndex],
   );
 
+  const audioTrackOptions = useMemo(
+    () => toAudioTrackOptions(audioTracks),
+    [audioTracks],
+  );
+
   // Subtitle tracks the *stream itself* carries (embedded HLS/MP4 subtitle
   // groups). These are surfaced by react-native-video's onTextTracks and
   // selected natively via selectedTextTrack {type:'index'} — distinct from the
@@ -435,19 +443,28 @@ export const PlayerCore = ({
   });
 
   // The picker list is identical in both render modes.
-  const subtitleTrackOptions = wyzieTracks.map((t) => ({
-    id: t.id,
-    label: `${t.display}${t.isHearingImpaired ? ' (CC)' : ''}`,
-  }));
+  // Memoized on the track list: <Video> re-renders on every progress event, and a fresh
+  // array each time made the flat list below rebuild its identity as often.
+  const subtitleTrackOptions = useMemo(
+    () =>
+      wyzieTracks.map((t) => ({
+        id: t.id,
+        label: `${t.display}${t.isHearingImpaired ? ' (CC)' : ''}`,
+      })),
+    [wyzieTracks],
+  );
   const subtitlesActive = wyzieSelectedId != null;
 
   // Embedded (stream-carried) subtitle tracks lead the menu, keyed by the
   // player's own index so selection maps straight back to selectedTextTrack.
-  const EMBEDDED_PREFIX = 'embedded:';
-  const embeddedSubtitleOptions = textTracks.map((t) => ({
-    id: `${EMBEDDED_PREFIX}${t.index}`,
-    label: t.title || t.language || `Subtitle ${t.index + 1}`,
-  }));
+  const embeddedSubtitleOptions = useMemo(
+    () =>
+      textTracks.map((t) => ({
+        id: `${EMBEDDED_PREFIX}${t.index}`,
+        label: t.title || t.language || `Subtitle ${t.index + 1}`,
+      })),
+    [textTracks],
+  );
 
   // One flat list feeds the drawer: embedded first, then sidecar/Wyzie. Each id
   // is unambiguous, so a single handler routes a pick to the right subsystem.
@@ -737,6 +754,19 @@ export const PlayerCore = ({
     isPlaying,
     controlsHold,
   );
+
+  // Opening an already-open drawer only re-affirms it, and `show()` is what keeps the
+  // controls from timing out behind it. Stable identities: <Video> re-renders on every
+  // progress event and these are handed to PlayerControls.
+  const openSettings = useCallback(() => {
+    setSettingsOpen(true);
+    show();
+  }, [show]);
+
+  const openEpisodes = useCallback(() => {
+    setEpisodesOpen(true);
+    show();
+  }, [show]);
 
   // Locking has to dismiss whatever is open, otherwise a drawer that was
   // already on screen stays live on top of the lock and every one of its rows
@@ -1484,18 +1514,8 @@ export const PlayerCore = ({
               seekToFraction(v);
               setScrubPreview(null);
             }}
-            onOpenEpisodes={
-              isTVShow && onSelectEpisode
-                ? () => {
-                    setEpisodesOpen(true);
-                    show();
-                  }
-                : undefined
-            }
-            onOpenSettings={() => {
-              setSettingsOpen(true);
-              show();
-            }}
+            onOpenEpisodes={isTVShow && onSelectEpisode ? openEpisodes : undefined}
+            onOpenSettings={openSettings}
             settingsActive={settingsActive}
             volume={volume}
             onVolumeChange={setVolume}
@@ -1546,7 +1566,7 @@ export const PlayerCore = ({
         onSelectStreamflixSource={
           onSelectStreamflixSource ? handleSelectStreamflixSource : undefined
         }
-        audioTracks={toAudioTrackOptions(audioTracks)}
+        audioTracks={audioTrackOptions}
         audioTracksNotice={audioTracksNotice(audioTracks.length, audioTracksReported)}
         selectedAudioIndex={activeAudioIndex}
         onSelectAudio={setSelectedAudioIndex}

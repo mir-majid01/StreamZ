@@ -26,6 +26,10 @@ import {
   type LiveEpgDay,
 } from '@/src/services/DaddyLiveService';
 import type { RootStackParamList } from '@/src/navigation/types';
+import {
+  buildChannelIndex,
+  resolveScheduleChannel,
+} from '@/src/services/liveTv/channelIndex';
 
 type Nav = NativeStackNavigationProp<RootStackParamList>;
 type Mode = 'channels' | 'schedule';
@@ -132,6 +136,10 @@ export const LiveTvScreen = () => {
   }, [filteredChannels, recents, scope]);
 
   const scheduleDay = days[dayIndex] ?? days[0];
+  // The schedule resolves every listed channel back to its catalogue entry, and the
+  // catalogue is twelve and a half thousand entries long. Scanning it per row, per render,
+  // was the tab's whole cost; the ids the rows already carry index it instead.
+  const channelIndex = useMemo(() => buildChannelIndex(channels), [channels]);
   const scheduleSections = useMemo(() => {
     if (!scheduleDay) return [];
     const q = query.trim().toLowerCase();
@@ -159,7 +167,6 @@ export const LiveTvScreen = () => {
         setRecents(recentIds);
         navigation.navigate('LivePlayer', {
           channel,
-          channels,
           stream,
         });
       } catch (e) {
@@ -168,7 +175,7 @@ export const LiveTvScreen = () => {
         setResolvingId(null);
       }
     },
-    [channels, navigation, resolvingId],
+    [navigation, resolvingId],
   );
 
   const openChannel = useCallback(
@@ -443,14 +450,9 @@ export const LiveTvScreen = () => {
                       <Focusable
                         key={ch.id}
                         onPress={() => {
-                          const full =
-                            channels.find((c) => c.id === ch.id) ?? {
-                              id: ch.id,
-                              name: ch.name,
-                              categories: [],
-                              eventTitles: [],
-                            };
-                          openChannel(full);
+                          openChannel(
+                            resolveScheduleChannel(channelIndex, ch),
+                          );
                         }}
                         className="rounded-lg py-1"
                         focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}

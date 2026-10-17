@@ -44,6 +44,12 @@ interface UseSubtitlesArgs {
 
 const MAX_TRACKS = 80;
 
+/**
+ * Default for `extraTracks`. A fresh `[]` literal in the parameter list is a new identity
+ * every render, which is exactly what the memoized `tracks` below is trying to avoid.
+ */
+const NO_EXTRA_TRACKS: WyzieSubtitle[] = [];
+
 const isLocalTrack = (
   track: SubtitleTrack,
 ): track is LocalDownloadedSubtitle => 'localUri' in track;
@@ -57,7 +63,7 @@ export const useSubtitles = ({
   defaultLanguage,
   localTracks,
   format = 'srt',
-  extraTracks = [],
+  extraTracks = NO_EXTRA_TRACKS,
 }: UseSubtitlesArgs) => {
   const [remoteTracks, setRemoteTracks] = useState<WyzieSubtitle[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -73,9 +79,12 @@ export const useSubtitles = ({
   const didAutoSelectRef = useRef(false);
 
   const useLocal = (localTracks?.length ?? 0) > 0;
-  const tracks: SubtitleTrack[] = useLocal
-    ? (localTracks as LocalDownloadedSubtitle[])
-    : [...extraTracks, ...remoteTracks];
+  // Identity matters more than the array here: the auto-select effect below is keyed on
+  // `tracks`, so rebuilding it on every parent render re-ran the effect every render.
+  const tracks = useMemo<SubtitleTrack[]>(() => {
+    if (useLocal) return localTracks as LocalDownloadedSubtitle[];
+    return [...extraTracks, ...remoteTracks];
+  }, [useLocal, localTracks, extraTracks, remoteTracks]);
 
   useEffect(() => {
     if (!enabled || !tmdbId || useLocal) {

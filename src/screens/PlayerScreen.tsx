@@ -115,9 +115,13 @@ export const PlayerScreen = ({
     prepareLocalPlayback,
     stopLocalPlayback,
   } = useDownloads();
-  const { role, send, subscribe, leaveRoom, room } = useWatchParty();
+  const { role, send, subscribe, leaveRoom, room, rtc } = useWatchParty();
   const roleRef = useRef(role);
   roleRef.current = role;
+  // The call API belongs to the app-lifetime party provider, so the latest object is kept
+  // in a ref and read from the unmount cleanup below rather than captured at mount.
+  const rtcRef = useRef(rtc);
+  rtcRef.current = rtc;
   const stayInRoomOnExitRef = useRef(true);
   // Player debug mode: when on, render the stream-resolving WebViewScraper
   // full-screen and interactive instead of invisible, so you can watch exactly
@@ -923,6 +927,11 @@ export const PlayerScreen = ({
 
   useEffect(() => {
     return () => {
+      // The call UI unmounts with this screen, so its camera, microphone and peer
+      // connections have to go with it; a host staying in the room keeps the room, not an
+      // open capture. `leaveCall` is already the app's idempotent teardown — it does
+      // nothing when no call was joined.
+      rtcRef.current.leaveCall();
       if (!stayInRoomOnExitRef.current) return;
       if (roleRef.current === 'host') {
         send({ type: 'browse' });

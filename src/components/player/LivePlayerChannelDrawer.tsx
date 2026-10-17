@@ -1,4 +1,4 @@
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { X } from 'lucide-react-native';
 import { Box } from '@/components/ui/box';
 import { HStack } from '@/components/ui/hstack';
@@ -18,6 +18,40 @@ interface LivePlayerChannelDrawerProps {
   onClose: () => void;
 }
 
+const ChannelRow = ({
+  channel,
+  active,
+  resolving,
+  onSelect,
+}: {
+  channel: LiveChannel;
+  active: boolean;
+  resolving: boolean;
+  onSelect: (channel: LiveChannel) => void;
+}) => (
+  <Focusable
+    onPress={() => onSelect(channel)}
+    className={`mb-1 rounded-lg px-3 py-3 ${active ? 'bg-primary/20' : ''}`}
+    focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
+  >
+    <Text
+      size="sm"
+      className={
+        active ? 'font-semibold text-foreground' : 'text-muted-foreground'
+      }
+      numberOfLines={1}
+    >
+      {channel.name}
+      {resolving ? '…' : ''}
+    </Text>
+    {channel.nowPlaying ? (
+      <Text size="xs" className="text-muted-foreground" numberOfLines={1}>
+        {channel.nowPlaying}
+      </Text>
+    ) : null}
+  </Focusable>
+);
+
 export const LivePlayerChannelDrawer = ({
   visible,
   channels,
@@ -27,6 +61,15 @@ export const LivePlayerChannelDrawer = ({
   onClose,
 }: LivePlayerChannelDrawerProps) => {
   if (!visible) return null;
+
+  const renderItem = ({ item }: { item: LiveChannel }) => (
+    <ChannelRow
+      channel={item}
+      active={item.id === activeChannelId}
+      resolving={item.id === resolvingId}
+      onSelect={onSelect}
+    />
+  );
 
   return (
     <Box style={StyleSheet.absoluteFill} className="z-50">
@@ -46,42 +89,21 @@ export const LivePlayerChannelDrawer = ({
             <Icon as={X} className="text-foreground" />
           </Focusable>
         </HStack>
-        <ScrollView className="flex-1 px-4 pb-6">
-          {channels.map((channel) => {
-            const active = channel.id === activeChannelId;
-            const resolving = channel.id === resolvingId;
-            return (
-              <Focusable
-                key={channel.id}
-                onPress={() => onSelect(channel)}
-                className={`mb-1 rounded-lg px-3 py-3 ${active ? 'bg-primary/20' : ''}`}
-                focusedClassName={`bg-primary/20 ${TV_FOCUS_BORDER_CLASSNAME}`}
-              >
-                <Text
-                  size="sm"
-                  className={
-                    active
-                      ? 'font-semibold text-foreground'
-                      : 'text-muted-foreground'
-                  }
-                  numberOfLines={1}
-                >
-                  {channel.name}
-                  {resolving ? '…' : ''}
-                </Text>
-                {channel.nowPlaying ? (
-                  <Text
-                    size="xs"
-                    className="text-muted-foreground"
-                    numberOfLines={1}
-                  >
-                    {channel.nowPlaying}
-                  </Text>
-                ) : null}
-              </Focusable>
-            );
-          })}
-        </ScrollView>
+        {/* Android's ReactViewGroup.drawChild asks BlendModeHelper.needsIsolatedLayer about
+            every sibling of every child it draws, so one container of N realized children
+            costs N^2 tag reads per frame. Rendering a window of the catalogue instead of all
+            ~12.5k rows keeps N at the handful on screen. No getItemLayout: a row is one line
+            without nowPlaying and two with it, so its height is not knowable here. */}
+        <FlatList
+          className="flex-1 px-4 pb-6"
+          data={channels}
+          keyExtractor={(item) => item.id}
+          renderItem={renderItem}
+          initialNumToRender={10}
+          maxToRenderPerBatch={10}
+          windowSize={7}
+          removeClippedSubviews
+        />
       </Box>
     </Box>
   );

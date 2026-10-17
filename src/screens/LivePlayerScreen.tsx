@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, StatusBar, StyleSheet, useWindowDimensions } from 'react-native';
 import Video, { type ReactVideoSource } from 'react-native-video';
 import { useKeepAwake } from 'expo-keep-awake';
@@ -33,9 +33,16 @@ export const LivePlayerScreen = ({
   route,
   navigation,
 }: RootStackScreenProps<'LivePlayer'>) => {
-  const { channel: initialChannel, channels, stream: initialStream } =
-    route.params;
+  const { channel: initialChannel, stream: initialStream } = route.params;
   const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+
+  // The channel list is read from the service rather than handed in through params: the
+  // merged catalogue is ~12.5k entries, and as a param every one of them stayed reachable
+  // for the lifetime of the stack entry, whether or not the drawer was ever opened.
+  const channels = useMemo(
+    () => DaddyLiveService.getPlaylistCatalogue(),
+    [],
+  );
 
   useKeepAwake('flick-live-player');
 
@@ -48,6 +55,7 @@ export const LivePlayerScreen = ({
   const [volume, setVolume] = useState(1);
   const [channelsOpen, setChannelsOpen] = useState(false);
   const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
 
   const overlayOpen = channelsOpen;
   const { visible, show, toggle } = useControlsVisibility(!paused, overlayOpen);
@@ -69,6 +77,10 @@ export const LivePlayerScreen = ({
   }, []);
 
   const loadStream = useCallback(async (next: LiveChannel) => {
+    // One token per request, and only the newest one may write. Channel taps are not
+    // serialized: two taps start two resolvers, and whichever answered last used to win,
+    // so a slow tune for a channel the user already left could overwrite the current one.
+    const requestId = ++requestIdRef.current;
     setLoading(true);
     setError(null);
     setPlayerDetail(null);
@@ -76,14 +88,18 @@ export const LivePlayerScreen = ({
     setResolvingId(next.id);
     try {
       const resolved = await DaddyLiveService.getStream(next.id);
+      if (requestId !== requestIdRef.current) return;
       setChannel(next);
       setStream(resolved);
       void DaddyLiveService.pushRecent(next.id);
     } catch (e) {
+      if (requestId !== requestIdRef.current) return;
       setError(friendlyLiveTvError(e));
     } finally {
-      setLoading(false);
-      setResolvingId(null);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setResolvingId(null);
+      }
     }
   }, []);
 
@@ -126,6 +142,7 @@ export const LivePlayerScreen = ({
     onDown: overlayOpen ? undefined : show,
   });
 
+  const openChannels = useCallback(() => setChannelsOpen(true), []);
   const handleBack = useCallback(() => navigation.goBack(), [navigation]);
 
   return (
@@ -201,11 +218,7 @@ export const LivePlayerScreen = ({
           onSeekBy={() => {}}
           onScrub={() => {}}
           onScrubEnd={() => {}}
-          onOpenEpisodes={
-            channels.length
-              ? () => setChannelsOpen(true)
-              : undefined
-          }
+          onOpenEpisodes={channels.length ? openChannels : undefined}
           volume={volume}
           onVolumeChange={setVolume}
         />
