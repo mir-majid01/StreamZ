@@ -1,9 +1,10 @@
 # Release signing: current state, migration cost, and the plan
 
-Status: **signing guard applied; production key generated 2026-10-18, secrets not yet in CI.**
-The Android build keeps the debug key for debug builds only, requires environment-provided release
-signing inputs, and fails before any release task can produce an artifact without them. CI decodes
-its protected keystore into a temporary runner path and removes it after Gradle.
+Status: **released.** CI run 42 built the first release-signed APK from this key, it is published as
+`v0.1.1`, and `releasePolicy/latest` now points at it. The Android build keeps the debug key for debug
+builds only, requires environment-provided release signing inputs, and fails before any release task
+can produce an artifact without them. CI decodes its protected keystore into a temporary runner path
+and removes it after Gradle.
 
 The release key exists now and is **not** in this repository — a committed keystore is the exact
 thing this document argues against:
@@ -14,8 +15,10 @@ thing this document argues against:
 | Alias | `streamz-release` |
 | Certificate | `CN=StreamZ, OU=Releases, O=StreamZ, C=IN`, RSA 2048, valid 2026-10-18 → 2054-03-05 |
 | Certificate SHA-256 | `9a883be09b1e3c90f26e6c907b86338078d25b6940b484c9992b24b7c7c511d4` |
+| Certificate SHA-1 | `DC:F6:7B:D4:EA:F1:B0:2E:E6:76:ED:B2:9A:EC:FD:F6:F6:9E:C5:A8` — Google sign-in is checked against this, not the SHA-256 |
 | Password | `keystore-password.txt` beside it (same value for store and key). Move it into a password manager and delete that file. |
-| Still owed by the owner | Four repository secrets — `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD` — then one CI run produces the first release-signed APK |
+| CI secrets | Added 2026-10-18: `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD`. The base64 in CI was verified to decode byte-identical to the keystore above. |
+| Still owed by the owner | Move the password out of the plain-text file; add `EXPO_PUBLIC_WYZIE_API_KEY` as a repository secret so the next build ships subtitles (run 42 logged `[env] Missing EXPO_PUBLIC_WYZIE_API_KEY`) |
 
 Two consequences, both irreversible in one direction. **Losing the keystore or its password ends
 every remote update path for every install carrying this certificate** — Android has no key reset.
@@ -37,9 +40,25 @@ be this value, and the updater will keep refusing any APK whose measured certifi
 
 Consequence for the updater: the app requires a `signingCertSha256` in the release policy and refuses
 to install on a mismatch (`src/utils/releasePolicy.ts` → `evaluateApkIntegrity`). Pinning the debug
-certificate would satisfy the code while proving nothing about who built the file, because that key
-is public and sits in the repository. So the publisher-authenticity guarantee is currently vacuous,
-and `FEATURES.updateChecker` stays `false` for that reason as much as any other.
+certificate would have satisfied the code while proving nothing about who built the file, because that
+key is public and sits in the repository. The policy now pins the value in the table above, so that
+guarantee finally says something.
+
+Two prerequisites that are invisible in code and were each paid for in a broken build:
+
+1. **The certificate must be registered with Firebase before the APK is testable.** Google sign-in
+   authenticates the *signing certificate*, so a new key produces `DEVELOPER_ERROR` (Android status
+   `10`) at the login screen while every line of app code is correct. Register both hashes on the
+   `stream.z` Android app — `POST https://firebase.googleapis.com/v1beta1/{androidApp.name}/sha` with
+   `{"shaHash": "<hex>", "certType": "SHA_1"}` and again with `SHA_256` — and leave the debug hashes
+   in place so debug builds keep working. Nothing needs rebuilding afterwards.
+2. **The release must be anonymously downloadable.** `UpdateService.checkForUpdates()` calls
+   `repos/mir-majid01/StreamZ/releases/latest` with no credential, and the APK asset is fetched the
+   same way. A private repository answers `404` to both, so the update prompt would appear (the
+   Firestore policy is public) and the download would then fail. GitHub offers no way to publish
+   releases from a private repository, which is why `mir-majid01/StreamZ` is public as of 2026-10-18.
+   This was checked clean first: `.env` is ignored, no keystore other than the standard debug one is
+   tracked, the Firebase admin key lives outside the repo, and no API key is hardcoded.
 
 ## 2. What is installed on the phone right now
 
@@ -88,7 +107,7 @@ to, and tell everyone who has an APK that the switch requires an uninstall. The 
 production-signed release is the migration event; after it, in-place updates work normally and this
 problem does not recur.
 
-## 4. Plan — generation and custody (not yet executed)
+## 4. Plan — generation and custody (executed 2026-10-18)
 
 1. Generate on this machine, **outside the repository**, into a directory that is not a git root:
    `keytool -genkeypair -storetype PKCS12 -keystore <outside>/streamz-release.p12 -alias streamz-release
@@ -165,3 +184,25 @@ separate from source control.
    check the refusal names the reason rather than installing.
 
 Steps 3–6 need the physical device and a real build, so they cannot be closed out locally.
+
+## 7. v0.1.1 as actually published (2026-10-18)
+
+CI run [42](https://github.com/mir-majid01/StreamZ/actions/runs/39147770457) on `8e2eb41`, both jobs
+green. Every number below was read out of the finished artifact, not copied from a log.
+
+| Measured | Value |
+| --- | --- |
+| Artifact | `streamz-release-42` → `app-release.apk`, 81,786,306 bytes |
+| SHA-256 | `750c37e4c7542a875b4fcf78b7db3c6935ae78db1ed688422e8064eaef743168` — equals the run's own `streamz-release-42-sha256` file, and equals the APK pulled off the installed phone |
+| Identity | `package stream.z`, `versionName 0.1.1`, `versionCode 2`, `targetSdk 36` |
+| Signer | `CN=StreamZ, OU=Releases`, V2 scheme, SHA-256 `9a883be0…`, SHA-1 `dcf67bd4…` — closes verification step 1 |
+| Release | <https://github.com/mir-majid01/StreamZ/releases/tag/v0.1.1>, asset `app-release.apk` |
+| Policy | `releasePolicy/latest` — `latestVersion 0.1.1`/code 2, `minimumSupportedVersion 0.1.0`/code 1, digest, size and certificate as above |
+| Anonymous reachability | `releases/latest` → 200, asset → 200 with `content-length: 81786306`, policy read with no auth → 200 |
+| Still open | verification step 3 (never observed the refusal directly), 5 (no second build yet, so the in-app update path is untested end to end), 6 (no tamper test) |
+
+`minimumSupportedVersion` is deliberately `0.1.0`, not `0.1.1`: `decideUpdate` turns `mandatory` into
+`blocks: true`, and a debug-signed device **cannot** install this APK in place. Marking it mandatory
+would have bricked every existing install into an update that Android refuses. Older builds stay
+usable and are offered the update; moving that floor up is a decision for the release after the
+in-app path has passed step 5.
