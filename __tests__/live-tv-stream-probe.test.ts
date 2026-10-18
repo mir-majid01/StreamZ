@@ -9,6 +9,8 @@ import {
   containerHintFromProbe,
   observationFromErrorText,
   probeStream,
+  resourceKindFromProbe,
+  STREAM_PROBE_BODY_PREVIEW_MAX_CHARS,
   type ProbeFetch,
   type StreamProbeResult,
 } from '@/src/services/liveTv/streamProbe';
@@ -18,12 +20,23 @@ const TOKENED_URL = 'https://cdn.example-live.invalid/real/star/idx.m3u8?token=S
 const response = (
   status: number,
   headers: Record<string, string> = {},
-): { status: number; headers: { get: (n: string) => string | null } } => {
+  extras: { body?: string; url?: string } = {},
+): {
+  status: number;
+  headers: { get: (n: string) => string | null };
+  url?: string;
+  text?: () => Promise<string>;
+} => {
   // Header names are case-insensitive on the wire; RN's implementation lowercases them before
   // handing them over, so the fake does the same and the test can write them as a server would.
   const normalised: Record<string, string> = {};
   for (const [name, value] of Object.entries(headers)) normalised[name.toLowerCase()] = value;
-  return { status, headers: { get: (name: string) => normalised[name.toLowerCase()] ?? null } };
+  return {
+    status,
+    headers: { get: (name: string) => normalised[name.toLowerCase()] ?? null },
+    ...(extras.url ? { url: extras.url } : {}),
+    ...(extras.body === undefined ? {} : { text: async () => extras.body ?? '' }),
+  };
 };
 
 const fetchAlways =
@@ -45,6 +58,7 @@ describe('probeStream — what a reply proves', () => {
     expect(result?.status).toBe(200);
     // Lowercased here so every later comparison is one comparison.
     expect(result?.contentType).toBe('application/vnd.apple.mpegurl');
+    expect(result?.method).toBe('GET');
     expect(hostOf(result)).toBe('cdn.example-live.invalid');
     expect(JSON.stringify(result)).not.toContain('SECRET-TOKEN');
     expect(JSON.stringify(result)).not.toContain('/real/star');
@@ -56,18 +70,18 @@ describe('probeStream — what a reply proves', () => {
     expect(result?.status).toBe(404);
   });
 
-  it('follows a refused HEAD with one short GET, and says which method answered', async () => {
+  it('uses one bounded GET rather than a HEAD that can disagree with the player request', async () => {
     const calls: Array<Record<string, unknown>> = [];
     const fetchImpl: ProbeFetch = async (_url, init) => {
       calls.push(init);
-      if (init.method === 'HEAD') return response(405);
       return response(200, { 'content-type': 'application/x-mpegURL' });
     };
     const result = await probeStream(TOKENED_URL, { fetchImpl, timeoutMs: 2000 });
-    expect(calls.map((c) => c.method)).toEqual(['HEAD', 'GET']);
+    expect(calls.map((c) => c.method)).toEqual(['GET']);
     expect(result?.observation).toBe('answered');
     expect(result?.method).toBe('GET');
     expect(result?.contentType).toBe('application/x-mpegurl');
+    expect(calls[0].headers).toEqual({});
   });
 
   it('sends the stream headers, because several IPTV CDNs answer a bare request with 403', async () => {
@@ -76,7 +90,7 @@ describe('probeStream — what a reply proves', () => {
       fetchImpl: recordOf(calls),
       headers: { Referer: 'https://example-live.invalid/', 'User-Agent': 'shield' },
     });
-    expect(calls[0].headers).toEqual({
+    expect(calls[0].headers).toMatchObject({
       Referer: 'https://example-live.invalid/',
       'User-Agent': 'shield',
     });
@@ -86,6 +100,78 @@ describe('probeStream — what a reply proves', () => {
     const calls: Array<Record<string, unknown>> = [];
     await probeStream(TOKENED_URL, { fetchImpl: recordOf(calls) });
     expect(calls[0].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reports a 200 master playlist as a manifest and keeps the final redirect target safe', async () => {
+    const result = await probeStream(TOKENED_URL, {
+      fetchImpl: fetchAlways(
+        response(
+          200,
+          { 'content-type': 'application/vnd.apple.mpegurl' },
+          {
+            url: 'https://redirected.example.invalid/live/master.m3u8?token=FINAL-SECRET',
+            body: '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nmedia.m3u8',
+          },
+        ),
+      ),
+    });
+    expect(result?.status).toBe(200);
+    expect(result?.resourceKind).toBe('manifest');
+    expect(result?.finalUrl).toBe('https://redirected.example.invalid/<redacted>');
+    expect(JSON.stringify(result)).not.toContain('FINAL-SECRET');
+    expect(JSON.stringify(result)).not.toContain('master.m3u8');
+  });
+
+  it('does not call an invalid 200 HTML body a manifest just because the URL ends in m3u8', async () => {
+    const result = await probeStream(TOKENED_URL, {
+      fetchImpl: fetchAlways(
+        response(
+          200,
+          { 'content-type': 'application/vnd.apple.mpegurl' },
+          { body: '<html><body>not a playlist</body></html>' },
+        ),
+      ),
+    });
+    expect(result?.status).toBe(200);
+    expect(result?.resourceKind).toBe('other');
+    expect(result?.bodyPreview).toContain('not a playlist');
+  });
+
+  it('does not call an HTML captive-portal response a manifest', async () => {
+    const result = await probeStream(TOKENED_URL, {
+      fetchImpl: fetchAlways(
+        response(200, { 'content-type': 'text/html' }, { body: '<html><body>login</body></html>' }),
+      ),
+    });
+    expect(result?.resourceKind).toBe('other');
+  });
+
+  it.each([403, 404, 500, 502, 503])('preserves the actual HTTP %i from the GET probe', async (status) => {
+    const result = await probeStream(TOKENED_URL, {
+      fetchImpl: fetchAlways(response(status, { 'content-type': 'text/plain' }, { body: 'Not available' })),
+    });
+    expect(result).toMatchObject({ observation: 'answered', method: 'GET', status });
+  });
+
+  it('truncates and sanitizes a response body preview', async () => {
+    const body = `prefix https://cdn.example.invalid/live/SECRET-PATH.m3u8?token=BODY-SECRET ${'x'.repeat(700)}`;
+    const result = await probeStream(TOKENED_URL, {
+      fetchImpl: fetchAlways(response(403, { 'content-type': 'text/plain' }, { body })),
+    });
+    expect(result?.bodyPreview).toBeTruthy();
+    expect(result?.bodyPreview?.length).toBeLessThanOrEqual(STREAM_PROBE_BODY_PREVIEW_MAX_CHARS);
+    expect(result?.bodyPreviewTruncated).toBe(true);
+    expect(result?.bodyPreview).not.toContain('BODY-SECRET');
+    expect(result?.bodyPreview).not.toContain('SECRET-PATH');
+  });
+
+  it.each([
+    ['https://cdn.example.invalid/master.m3u8', 'application/vnd.apple.mpegurl', '#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\na.m3u8', 'manifest'],
+    ['https://cdn.example.invalid/live.m3u8', 'application/vnd.apple.mpegurl', '#EXTM3U\n#EXTINF:6,\nsegment.ts', 'media-playlist'],
+    ['https://cdn.example.invalid/segment.ts', 'video/mp2t', '', 'segment'],
+    ['https://cdn.example.invalid/key.bin', 'application/octet-stream', '', 'encryption-key'],
+  ] as const)('classifies %s as %s', (url, contentType, body, kind) => {
+    expect(resourceKindFromProbe({ url, contentType, bodyPreview: body })).toBe(kind);
   });
 });
 

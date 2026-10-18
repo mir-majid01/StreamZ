@@ -187,9 +187,10 @@ describe('a permanent answer is not retried, a transient one is, and the wait is
     // The same tune later answers 200: the classifier is pure, so the next attempt's own evidence
     // decides, and a 200 is not a failure at all.
     const later = classify({ probe: probe({ status: 200 }) });
-    expect(later.category).toBe('http-error');
+    expect(later.category).toBe('unknown');
+    expect(later.message).toMatch(/ordinary request|mismatch/i);
     // 200 never reaches this path in the app (there is no error to classify); pinned so a future
-    // edit cannot read a success as a diagnosis.
+    // edit cannot read a success as an HTTP failure diagnosis.
     expect(later.status).toBe(200);
   });
 });
@@ -260,7 +261,7 @@ describe('the player screen is wired to the evidence, not to a guess', () => {
   it('asks the host once when the payload names a bad HTTP status', () => {
     expect(src).toMatch(/classified\.codeName === 'ERROR_CODE_IO_BAD_HTTP_STATUS'/);
     expect(src).toMatch(/classified\.status === null/);
-    expect(src).toContain('await askTheHost(stream)');
+    expect(src).toContain('await askTheHost(stream, failedResourceUrl)');
   });
 
   it('re-classifies with the answer instead of showing the pre-probe sentence', () => {

@@ -41,8 +41,15 @@
  * observation somebody else already made, so the mapping stays testable — and so a probe that
  * says nothing cannot make the diagnosis louder than the evidence.
  */
-import type { PlayerErrorPayload } from '@/src/services/liveTv/playbackError';
-import type { StreamProbeResult } from '@/src/services/liveTv/streamProbe';
+import {
+  playbackErrorDiagnostics,
+  type PlayerErrorPayload,
+} from '@/src/services/liveTv/playbackError';
+import {
+  resourceKindFromProbe,
+  type StreamProbeResult,
+  type StreamResourceKind,
+} from '@/src/services/liveTv/streamProbe';
 
 export type PlaybackFailureCategory =
   /** The stream host could not be reached. "dns" is claimed only on a DNS-specific signal. */
@@ -85,10 +92,23 @@ export interface PlaybackFailure {
   /**
    * The HTTP status, when something actually read one. media3 does not put the status in the
    * payload for `ERROR_CODE_IO_BAD_HTTP_STATUS` (ReactExoplayerView.java:1994 sends only the name
-   * and `"2"+code`), so this is non-null only when a probe answered. Null means "we do not know
-   * the status", and the copy has to say that instead of inventing a reason.
+   * and `"2"+code`). A status named by the native exception is retained too, when parseable. Null
+   * means "we do not know the status", and the copy has to say that instead of inventing a reason.
    */
   status: number | null;
+  /** Sanitized native exception text, when the platform supplied one. */
+  nativeException: string | null;
+  /** Redacted final response URL after redirects, when fetch exposed it. */
+  finalUrl: string | null;
+  /** Response metadata captured by the retry-path GET. */
+  contentType: string | null;
+  bodyPreview: string | null;
+  bodyPreviewTruncated: boolean;
+  resourceKind: StreamResourceKind | null;
+  /** True when the retry-path GET received a successful 2xx response. */
+  probeSucceeded: boolean;
+  /** True when a native player error remains after a successful 2xx probe. */
+  probeMismatch: boolean;
   /**
    * How long to wait before the next automatic attempt, when the server asked for a wait. Already
    * clamped by this file; null means use the retry schedule's own cadence.
@@ -183,6 +203,9 @@ const CATEGORY_BY_CODE_NAME: Readonly<Record<string, PlaybackFailureCategory>> =
  * left to fall through as a plain http-error rather than guessed at.
  */
 export const categoryFromHttpStatus = (status: number): PlaybackFailureCategory => {
+  // A successful response is evidence against an HTTP failure. In particular, a retry-path GET
+  // that gets 200 must never turn the player's earlier error into a made-up HTTP diagnosis.
+  if (status >= 100 && status <= 399) return 'unknown';
   if (status === 401 || status === 403 || status === 407) return 'access-rejected';
   if (status === 404 || status === 410) return 'stream-gone';
   if (status === 429) return 'rate-limited';
@@ -255,6 +278,7 @@ const sentence = (
     contentType?: string | null;
     probe?: StreamProbeResult | null;
     media3Name: string | null;
+    probeSucceeded: boolean;
   },
 ): string => {
   const who = parts.host ?? 'This channel';
@@ -315,9 +339,11 @@ const sentence = (
     case 'unknown':
       return parts.probe?.observation === 'tls-handshake-failed'
         ? `The secure connection to ${who} failed its handshake. Its certificate or TLS setup is broken.`
-        : parts.probe?.observation === 'answered'
-          ? `${who} answers an ordinary request, so this is the stream failing, not the connection.`
-          : `This channel stopped with an error the app cannot name yet. The code below is what makes it reportable.`;
+        : parts.probeSucceeded
+          ? `${who} answers an ordinary request (HTTP ${parts.status ?? 200}), so the native player failure does not match an HTTP failure; the player/stream mismatch is unresolved.`
+          : parts.probe?.observation === 'answered'
+            ? `${who} answers an ordinary request, so this is the stream failing, not the connection.`
+            : `This channel stopped with an error the app cannot name yet. The code below is what makes it reportable.`;
   }
 };
 
@@ -331,6 +357,7 @@ export const classifyPlaybackFailure = (
   const host = hostOf(input.url);
   const probe = input.probe ?? null;
   const payload = input.payload ?? {};
+  const diagnostics = playbackErrorDiagnostics(payload);
 
   const codeName = nameFromErrorString(payload.error?.errorString);
   const code = codeName
@@ -350,10 +377,14 @@ export const classifyPlaybackFailure = (
     // answer to "would retrying help".
     category = input.playbackStarted ? 'network-lost-mid-stream' : 'unknown';
   }
-  // The status decides these, and only a probe ever reads a status. Without one, `http-error` with
-  // `status: null` is what the copy is allowed to claim — "an error status, reason unreadable".
-  // Calling every HTTP failure a broken feed is the bug being fixed here.
-  const httpStatus = typeof probe?.status === 'number' ? probe.status : null;
+  // The status decides these. Prefer the direct GET's status; a status named in the native
+  // exception is a safe fallback when the retry path has not run yet. Calling every HTTP failure a
+  // broken feed — especially after a successful 200 GET — is the bug being fixed here.
+  const probeStatus =
+    typeof probe?.status === 'number' && Number.isInteger(probe.status) && probe.status >= 100 && probe.status <= 599
+      ? probe.status
+      : null;
+  const httpStatus = probeStatus ?? diagnostics.httpStatus;
   if (media3Name === 'ERROR_CODE_IO_BAD_HTTP_STATUS') {
     category = httpStatus === null ? 'http-error' : categoryFromHttpStatus(httpStatus);
   }
@@ -365,7 +396,8 @@ export const classifyPlaybackFailure = (
 
   if (category === null) {
     // No usable player code. The probe alone can still carry a diagnosis, because it observed the
-    // transport directly; anything else stays `unknown` rather than a guess.
+    // transport directly. A successful 2xx answer remains `unknown`: it is evidence of a player /
+    // resource mismatch, not an HTTP failure.
     if (probe?.observation === 'host-did-not-resolve' || probe?.observation === 'socket-could-not-open') {
       category = 'dns-or-unreachable';
     } else if (probe?.observation === 'timed-out') {
@@ -374,26 +406,46 @@ export const classifyPlaybackFailure = (
       // No bucket says "TLS"; the handshake failing is a refusal by the endpoint, and `unknown`
       // with the honest sentence is used rather than stretching a category.
       category = 'unknown';
+    } else if (probe?.observation === 'answered' && httpStatus !== null && httpStatus >= 400) {
+      category = categoryFromHttpStatus(httpStatus);
     } else {
       category = 'unknown';
     }
   }
 
-  const status = typeof probe?.status === 'number' ? probe.status : null;
+  const probeSucceeded =
+    probe?.observation === 'answered' && httpStatus !== null && httpStatus >= 200 && httpStatus <= 299;
+  const resourceKind = probe
+    ? probe.resourceKind ??
+      resourceKindFromProbe({
+        url: probe.finalUrl,
+        contentType: probe.contentType,
+        bodyPreview: probe.bodyPreview,
+      })
+    : null;
   return {
     category,
     message: sentence(category, {
       host,
-      status,
+      status: httpStatus,
       contentType: probe?.contentType ?? null,
       probe,
       media3Name,
+      probeSucceeded,
     }),
     transient: TRANSIENT_CATEGORIES.has(category),
     codeName: media3Name,
     code,
     host,
-    status,
+    status: httpStatus,
+    nativeException: diagnostics.nativeException,
+    finalUrl: probe?.finalUrl ?? null,
+    contentType: probe?.contentType ?? null,
+    bodyPreview: probe?.bodyPreview ?? null,
+    bodyPreviewTruncated: probe?.bodyPreviewTruncated ?? false,
+    resourceKind,
+    probeSucceeded,
+    probeMismatch: probeSucceeded && diagnostics.detail !== null,
     // Only a throttle asks for a wait by name. Everything else keeps the schedule's own cadence,
     // which is a wait the app chose rather than one it invented from a server's silence.
     backoffMs: category === 'rate-limited' ? clampBackoffMs(probe?.retryAfterSeconds) : null,

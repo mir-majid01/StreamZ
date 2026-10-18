@@ -323,6 +323,56 @@ describe('classifyPlaybackFailure — context and probe sharpening', () => {
     expect(blind.message).not.toMatch(/HTTP \d/);
   });
 
+  it('does not turn a successful 200 GET into an HTTP failure diagnosis', () => {
+    const failure = classifyPlaybackFailure({
+      payload: exo('ERROR_CODE_IO_BAD_HTTP_STATUS', 2004),
+      url: STREAM_URL,
+      probe: probeOf({
+        observation: 'answered',
+        status: 200,
+        method: 'GET',
+        contentType: 'application/vnd.apple.mpegurl',
+        bodyPreview: '#EXTM3U #EXT-X-STREAM-INF:BANDWIDTH=1',
+        resourceKind: 'manifest',
+      }),
+    });
+    expect(failure.category).toBe('unknown');
+    expect(failure.status).toBe(200);
+    expect(failure.probeSucceeded).toBe(true);
+    expect(failure.probeMismatch).toBe(true);
+    expect(failure.message).toMatch(/answers an ordinary request|mismatch/i);
+    expect(failure.message).not.toMatch(/HTTP 200.*error|HTTP error/i);
+  });
+
+  it('retains sanitized native exception and probe diagnostics for reporting', () => {
+    const failure = classifyPlaybackFailure({
+      payload: {
+        error: {
+          errorString: 'ExoPlaybackException: ERROR_CODE_IO_BAD_HTTP_STATUS',
+          errorCode: '22004',
+          errorException: 'HTTP Error 403: https://cdn.example/live.m3u8?token=SECRET',
+        },
+      },
+      url: STREAM_URL,
+      probe: probeOf({
+        observation: 'answered',
+        status: 403,
+        method: 'GET',
+        finalUrl: 'https://cdn.example/<redacted>',
+        contentType: 'text/html',
+        bodyPreview: 'Access denied',
+        resourceKind: 'other',
+      }),
+    });
+    expect(failure.category).toBe('access-rejected');
+    expect(failure.status).toBe(403);
+    expect(failure.nativeException).not.toContain('SECRET');
+    expect(failure.finalUrl).toBe('https://cdn.example/<redacted>');
+    expect(failure.contentType).toBe('text/html');
+    expect(failure.bodyPreview).toBe('Access denied');
+    expect(failure.resourceKind).toBe('other');
+  });
+
   it('treats a probe that timed out as a timeout, and a TLS failure as nothing more than itself', () => {
     expect(
       classifyPlaybackFailure({ payload: {}, url: STREAM_URL, probe: probeOf({ observation: 'timed-out', ms: 2500 }) })

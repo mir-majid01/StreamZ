@@ -1,10 +1,15 @@
 /**
  * The live player used to drop the payload its own onError handed it, so every failure —
  * publisher offline, host refusing the request, container the device cannot decode — produced
- * the same unreportable sentence. These cover what is now kept, and the one field that is
- * deliberately never kept.
+ * the same unreportable sentence. These cover what is now kept, and the raw field that is
+ * deliberately never retained.
  */
-import { livePlaybackDetail } from '@/src/services/liveTv/playbackError';
+import {
+  httpStatusFromText,
+  livePlaybackDetail,
+  playbackErrorResourceUrl,
+  playbackErrorDiagnostics,
+} from '@/src/services/liveTv/playbackError';
 
 describe('livePlaybackDetail', () => {
   it('keeps the Android error name and code', () => {
@@ -64,5 +69,55 @@ describe('livePlaybackDetail', () => {
     expect(detail).toBe('code 20001');
     expect(detail).not.toContain('REDACTED-ME');
     expect(detail).not.toContain('cdn.example');
+  });
+
+  it('captures a redacted native exception and parses its HTTP status separately from media3 code', () => {
+    const diagnostics = playbackErrorDiagnostics({
+      error: {
+        errorString: 'ExoPlaybackException: ERROR_CODE_IO_BAD_HTTP_STATUS',
+        errorCode: '22004',
+        errorException:
+          'java.io.IOException: HTTP Error 403: https://cdn.example/master.m3u8?token=NATIVE-SECRET',
+      },
+    });
+    expect(diagnostics.detail).toContain('ERROR_CODE_IO_BAD_HTTP_STATUS');
+    expect(diagnostics.httpStatus).toBe(403);
+    expect(diagnostics.nativeException).toContain('HTTP Error 403');
+    expect(diagnostics.nativeException).not.toContain('NATIVE-SECRET');
+    expect(diagnostics.nativeException).not.toContain('cdn.example');
+  });
+
+  it('only parses statuses with an HTTP/status label', () => {
+    expect(httpStatusFromText('errorCode=22004 retry=503')).toBeNull();
+    expect(httpStatusFromText('response status code: 503')).toBe(503);
+    expect(httpStatusFromText('HTTP/2 404 Not Found')).toBe(404);
+  });
+
+  it('bounds a long native exception after redaction', () => {
+    const diagnostics = playbackErrorDiagnostics({
+      error: { errorException: `java.io.IOException: ${'x'.repeat(900)}` },
+    });
+    expect(diagnostics.nativeException?.length).toBeLessThanOrEqual(512);
+  });
+
+  it('reads the nested Media3 HTTP exception from the native stack and returns its resource only for probing', () => {
+    const payload = {
+      error: {
+        errorString: 'ExoPlaybackException: ERROR_CODE_IO_BAD_HTTP_STATUS',
+        errorCode: '22004',
+        errorException: 'androidx.media3.exoplayer.ExoPlaybackException: Source error',
+        errorStackTrace:
+          'androidx.media3.datasource.HttpDataSource$InvalidResponseCodeException: Response code: 403\n' +
+          '  at androidx.media3.datasource.DefaultHttpDataSource.open(DefaultHttpDataSource.java:512)\n' +
+          'Caused by: https://cdn.example/seg-001.ts?sig=STACK-SECRET',
+      },
+    };
+    const diagnostics = playbackErrorDiagnostics(payload);
+    expect(diagnostics.httpStatus).toBe(403);
+    expect(diagnostics.nativeException).toContain('Response code: 403');
+    expect(diagnostics.nativeException).not.toContain('STACK-SECRET');
+    expect(playbackErrorResourceUrl(payload)).toBe(
+      'https://cdn.example/seg-001.ts?sig=STACK-SECRET',
+    );
   });
 });

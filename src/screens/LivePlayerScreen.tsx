@@ -24,6 +24,7 @@ import {
 import { liveSourceType } from '@/src/services/liveTv/sourceType';
 import {
   livePlaybackDetail,
+  playbackErrorResourceUrl,
   type PlayerErrorPayload,
 } from '@/src/services/liveTv/playbackError';
 import {
@@ -31,11 +32,27 @@ import {
   classifyPlaybackFailure,
   retryDelayMsFor,
   shouldRetry,
+  type PlaybackFailure,
 } from '@/src/services/liveTv/playbackFailure';
 import { probeStream, type StreamProbeResult } from '@/src/services/liveTv/streamProbe';
 import { FONT } from '@/src/theme/tokens';
 import { isTV } from '@/src/utils/tv';
 import type { RootStackScreenProps } from '@/src/navigation/types';
+
+const playbackDiagnosticSummary = (failure: PlaybackFailure | null): string | null => {
+  if (!failure) return null;
+  const lines = [
+    failure.resourceKind ? `resource=${failure.resourceKind}` : null,
+    failure.status != null ? `HTTP ${failure.status}` : null,
+    failure.contentType ? `content-type=${failure.contentType}` : null,
+    failure.finalUrl ? `final=${failure.finalUrl}` : null,
+    failure.bodyPreview
+      ? `body=${failure.bodyPreview}${failure.bodyPreviewTruncated ? '…' : ''}`
+      : null,
+    failure.nativeException ? `native=${failure.nativeException}` : null,
+  ].filter(Boolean);
+  return lines.length ? lines.join('\n') : null;
+};
 
 export const LivePlayerScreen = ({
   route,
@@ -58,6 +75,8 @@ export const LivePlayerScreen = ({
   const [stream, setStream] = useState<LiveStream | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [playerDetail, setPlayerDetail] = useState<string | null>(null);
+  /** Redacted transport/native evidence retained for the final error report. */
+  const [playbackDiagnostics, setPlaybackDiagnostics] = useState<PlaybackFailure | null>(null);
   /**
    * Automatic retries the screen had already spent when it gave up, or null when nothing failed.
    * Kept so the error state can say it tried twice on its own instead of looking like a first
@@ -99,6 +118,7 @@ export const LivePlayerScreen = ({
 
   const overlayOpen = channelsOpen;
   const { visible, show, toggle } = useControlsVisibility(!paused, overlayOpen);
+  const diagnosticSummary = playbackDiagnosticSummary(playbackDiagnostics);
 
   // The window itself (landscape, hidden system bars, and giving both back on the way out) is
   // owned by the shared hook, because the same chrome is what made the tab bar jump after a movie
@@ -159,12 +179,13 @@ export const LivePlayerScreen = ({
    * `classifyPlaybackFailure` decides what it means.
    */
   const askTheHost = useCallback(
-    async (target: LiveStream): Promise<StreamProbeResult | null> => {
-      if (!target.url) return null;
+    async (target: LiveStream, resourceUrl?: string | null): Promise<StreamProbeResult | null> => {
+      const url = resourceUrl || target.url;
+      if (!url) return null;
       const controller = new AbortController();
       probeRef.current = controller;
       try {
-        return await probeStream(target.url, {
+        return await probeStream(url, {
           headers: target.headers,
           signal: controller.signal,
         });
@@ -193,6 +214,7 @@ export const LivePlayerScreen = ({
     setProbe(null);
     setRetriesSpent(null);
     setRetryNotice(null);
+    setPlaybackDiagnostics(null);
     setAttemptToken((token) => token + 1);
   }, [cancelProbe, clearRetryTimer]);
 
@@ -205,6 +227,7 @@ export const LivePlayerScreen = ({
     setLoading(true);
     setError(null);
     setPlayerDetail(null);
+    setPlaybackDiagnostics(null);
     setStream(null);
     setResolvingId(next.id);
     try {
@@ -309,7 +332,8 @@ export const LivePlayerScreen = ({
         classified.codeName === 'ERROR_CODE_IO_BAD_HTTP_STATUS' &&
         classified.status === null
       ) {
-        const answer = await askTheHost(stream);
+        const failedResourceUrl = playbackErrorResourceUrl(payload) ?? stream.url;
+        const answer = await askTheHost(stream, failedResourceUrl);
         if (!mountedRef.current || requestId !== requestIdRef.current) return;
         if (answer) {
           setProbe(answer);
@@ -321,6 +345,8 @@ export const LivePlayerScreen = ({
           });
         }
       }
+
+      setPlaybackDiagnostics(classified);
 
       // Kept even when a plain-language sentence is available: which media3 code the stream raised
       // is the only thing that separates a publisher outage from a container this device cannot
@@ -404,6 +430,7 @@ export const LivePlayerScreen = ({
             setRetriesSpent(null);
             setError(null);
             setPlayerDetail(null);
+            setPlaybackDiagnostics(null);
           }}
           onError={handlePlaybackError}
         />
@@ -431,6 +458,15 @@ export const LivePlayerScreen = ({
               style={{ fontFamily: FONT.mono }}
             >
               {playerDetail}
+            </Text>
+          ) : null}
+          {playbackDiagnostics ? (
+            <Text
+              size="xs"
+              className="mt-3 max-w-3xl text-center text-muted-foreground"
+              style={{ fontFamily: FONT.mono }}
+            >
+              {diagnosticSummary}
             </Text>
           ) : null}
         </Center>
@@ -461,6 +497,15 @@ export const LivePlayerScreen = ({
               style={{ fontFamily: FONT.mono }}
             >
               {playerDetail}
+            </Text>
+          ) : null}
+          {diagnosticSummary ? (
+            <Text
+              size="xs"
+              className="mt-3 max-w-3xl text-center text-muted-foreground"
+              style={{ fontFamily: FONT.mono }}
+            >
+              {diagnosticSummary}
             </Text>
           ) : null}
           {(retriesSpent ?? 0) > 0 ? (
