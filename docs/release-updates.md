@@ -4,11 +4,12 @@ How a StreamZ build decides that it is too old, and what it demands before handi
 Android installer. Written for the person who publishes releases, so the procedure at the bottom is
 the operative part.
 
-**Production update checks are off.** `FEATURES.updateChecker` (`src/config/features.ts`) is
-`false`, and that flag alone keeps the boot gate inert — it is the switch for the policy path.
-`EXPO_PUBLIC_UPDATE_REPO_OWNER` + `EXPO_PUBLIC_UPDATE_REPO_NAME` gate only the older GitHub
-service (the manual check in Settings); with no repository named that service refuses to fetch
-anything, which is what stops any build from ever pointing at upstream Flick releases.
+**The verified update path is enabled.** `FEATURES.updateChecker`
+(`src/config/features.ts`) is `true`, so the signed build checks the authoritative
+`releasePolicy/latest` document at boot and in Settings. A missing, malformed, forbidden, or
+unreachable policy remains non-blocking. `EXPO_PUBLIC_UPDATE_REPO_OWNER` +
+`EXPO_PUBLIC_UPDATE_REPO_NAME` gate only the older GitHub service; they have no defaults, so a
+build cannot silently point at upstream Flick releases.
 
 ## What decides "mandatory"
 
@@ -160,13 +161,13 @@ document — devices read `missing` and continue working.
 
 These are blockers, not caveats to write around:
 
-- **No StreamZ signing identity exists yet.** `android/app/build.gradle` sets
-  `signingConfigs.debug` for `buildTypes.release`, and `android/app/debug.keystore` is committed.
-  Every CI APK therefore carries the public Android debug certificate
-  (`CN=Android Debug`, `FA:C6:17:45:DC:09:03:78:6F:B9:ED:E6:2A:96:2B:39:9F:73:48:F0:BB:6F:89:9B:83:32:66:75:91:03:3B:9C`).
-  Pinning that in a policy would be theatre: the key is public, so it proves nothing about who built
-  the file, and the pin would have to be broken the moment a real keystore appears. A release
-  keystore, held in CI secrets rather than committed, has to come first.
+- **No StreamZ signing identity exists yet.** `android/app/build.gradle` keeps
+  `signingConfigs.debug` for `buildTypes.debug` only. Every release task now requires
+  `STREAMZ_RELEASE_STORE_FILE`, `STREAMZ_RELEASE_STORE_PASSWORD`, `STREAMZ_RELEASE_KEY_ALIAS`, and
+  `STREAMZ_RELEASE_KEY_PASSWORD`, and fails clearly when any input is absent or the keystore path is
+  not a file. CI decodes its protected keystore into the runner's temporary directory and removes it
+  after Gradle. A real release keystore, held in CI secrets rather than committed, still has to be
+  provisioned before a release build can succeed.
 - **The module compiles in CI but has never run on a device.** Autolinking is proven:
   `expo-modules-autolinking resolve -p android` returns 21 packages and lists `apk-integrity` with
   `sourceDir: modules/apk-integrity/android`. It previously returned 20 because my `build.gradle`

@@ -10,5 +10,8 @@ export const FEATURES = {
   liveTv: true,
   watchParty: false,
   tvLayout: false,
-  updateChecker: false,
+  // The signed release build checks Firestore `releasePolicy/latest` at boot and in Settings.
+  // A missing/unreachable policy is non-blocking, so enabling the path is safe before the first
+  // release document is published; the verified installer still refuses files without a policy.
+  updateChecker: true,
 } as const;

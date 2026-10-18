@@ -35,7 +35,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - uses: actions/setup-java@v4
@@ -68,29 +68,51 @@ jobs:
             printf 'EXPO_PUBLIC_TMDB_BASE_URL=%s\n' "${EXPO_PUBLIC_TMDB_BASE_URL:-https://api.themoviedb.org/3}"
             printf 'EXPO_PUBLIC_TMDB_IMAGE_BASE_URL=%s\n' "${EXPO_PUBLIC_TMDB_IMAGE_BASE_URL:-https://image.tmdb.org/t/p/w500}"
             printf 'EXPO_PUBLIC_WYZIE_BASE_URL=%s\n' "${EXPO_PUBLIC_WYZIE_BASE_URL:-https://sub.wyzie.io}"
-            # A repository owner/name is public information, not a secret, but it decides
-            # whose APK an updater would offer — so it is named here rather than baked into
-            # the source, and it names this project. The updater stays inert while
-            # FEATURES.updateChecker is false regardless of what is set below.
-            printf 'EXPO_PUBLIC_UPDATE_REPO_OWNER=%s\n' "${EXPO_PUBLIC_UPDATE_REPO_OWNER:-mir-majid01}"
-            printf 'EXPO_PUBLIC_UPDATE_REPO_NAME=%s\n' "${EXPO_PUBLIC_UPDATE_REPO_NAME:-StreamZ}"
+            printf 'EXPO_PUBLIC_UPDATE_REPO_OWNER=mir-majid01\n'
+            printf 'EXPO_PUBLIC_UPDATE_REPO_NAME=StreamZ\n'
             for k in EXPO_PUBLIC_TMDB_API_KEY EXPO_PUBLIC_WYZIE_API_KEY EXPO_PUBLIC_WATCH_PARTY_URL; do
               eval "v=\${$k}"
               if [ -n "$v" ]; then printf '%s=%s\n' "$k" "$v"; fi
             done
           } > .env
 
+      # Release signing is intentionally fail-closed. The keystore is decoded
+      # outside the workspace and exists only for the Gradle invocation.
+      - name: Prepare release signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${RELEASE_KEYSTORE_BASE64:?RELEASE_KEYSTORE_BASE64 is required for assembleRelease}"
+          : "${RELEASE_KEYSTORE_PASSWORD:?RELEASE_KEYSTORE_PASSWORD is required for assembleRelease}"
+          : "${RELEASE_KEY_ALIAS:?RELEASE_KEY_ALIAS is required for assembleRelease}"
+          : "${RELEASE_KEY_PASSWORD:?RELEASE_KEY_PASSWORD is required for assembleRelease}"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/streamz-release.keystore"
+          test -s "$RUNNER_TEMP/streamz-release.keystore"
+
       # The committed android/gradle.properties caps the JVM heap at what this
       # project's 3.9 GB dev machine can spare; the runner has room for more and
       # D8 needs it to finish the release bundle.
       - name: Assemble release APK
         working-directory: android
+        env:
+          STREAMZ_RELEASE_STORE_FILE: ${{ runner.temp }}/streamz-release.keystore
+          STREAMZ_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          STREAMZ_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          STREAMZ_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease \
             --no-daemon --stacktrace \
             -Dorg.gradle.jvmargs=-Xmx3072m \
             -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+      - name: Remove release keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/streamz-release.keystore"
 
       # P20: a release policy is only meaningful if the checksum describes the exact
       # bytes this run produced. `sha256sum` streams the file, so a ~40 MB APK never
@@ -156,7 +178,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: npm
 
       - name: Install JS dependencies

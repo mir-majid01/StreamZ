@@ -100,6 +100,120 @@ Official GitHub builds already point at the public party server. If you compile 
 
 ---
 
+## Reproducible development and delivery
+
+The repository pins the JavaScript runtime in [`.nvmrc`](.nvmrc) to Node
+22.13.1, which is the minimum Node 22 line supported by Expo SDK 57. The root
+`package-lock.json`, `functions/package-lock.json`, and
+`party-server/*/package-lock.json` files are authoritative; use npm rather
+than a different package manager.
+
+### Requirements
+
+- Node 22.13.1 (`nvm install && nvm use`)
+- npm from that Node installation
+- JDK 17 and Android SDK 36 for native Android builds
+- Docker (optional) for the reproducible watch-party server image
+
+### Setup
+
+```sh
+nvm install
+nvm use
+npm ci
+cp .env.example .env
+# Edit .env with the local, non-committed values needed for the app.
+```
+
+### Run locally
+
+```sh
+# Expo development server
+npm start
+
+# Debug Android development build (uses the committed debug keystore only for debug)
+npm run android
+
+# Watch-party server and web companion
+npm --prefix party-server ci
+npm --prefix party-server build
+npm --prefix party-server start
+```
+
+### Test and typecheck
+
+`make test` is the single offline unit-test command. It uses only installed
+dependencies and local test fixtures; it does not start Firebase or contact a
+remote service.
+
+```sh
+make test
+npm run typecheck
+```
+
+### Release signing
+
+Release builds refuse to use `android/app/debug.keystore`. Provide all four
+values from the environment, pointing at a keystore kept outside this
+repository:
+
+```sh
+export STREAMZ_RELEASE_STORE_FILE=/secure/path/streamz-release.p12
+export STREAMZ_RELEASE_STORE_PASSWORD='your-password'
+export STREAMZ_RELEASE_KEY_ALIAS='streamz-release'
+export STREAMZ_RELEASE_KEY_PASSWORD='your-password'
+npm run android:apk
+```
+
+CI uses the equivalent protected secrets `RELEASE_KEYSTORE_BASE64`,
+`RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and
+`RELEASE_KEY_PASSWORD`. The base64 keystore is decoded into the runner's
+temporary directory and removed after the Gradle step. No keystore, password,
+or credential belongs in git.
+
+### Docker and deployment
+
+The root Dockerfile builds and runs the watch-party server plus its web
+companion. It does not attempt to boot an Android emulator inside the image.
+
+```sh
+docker build -t streamz-party-server .
+docker run --rm -p 8787:8787 \
+  -e TMDB_API_KEY="$TMDB_API_KEY" \
+  -e WYZIE_API_KEY="$WYZIE_API_KEY" \
+  streamz-party-server
+curl http://127.0.0.1:8787/health
+```
+
+For a Railway deployment, authenticate with the Railway CLI, link the service,
+then run from `party-server/`:
+
+```sh
+cd party-server
+npm ci
+npm run build
+railway login
+railway link
+railway up
+```
+
+For Firebase Functions and Firestore rules, authenticate with Firebase CLI and
+run from the repository root:
+
+```sh
+npm --prefix functions ci
+npm --prefix functions run build
+npx firebase deploy --only functions,firestore
+```
+
+The in-app updater remains opt-in: both `EXPO_PUBLIC_UPDATE_REPO_OWNER` and
+`EXPO_PUBLIC_UPDATE_REPO_NAME` are blank by default, and
+`FEATURES.updateChecker` remains disabled until a real release policy and
+release signing identity have been verified. The website's offline release
+fallback points to this repository (`mir-majid01/StreamZ`).
+
+---
+
 ## Installation
 
 Grab the latest **APK** (Android), **IPA** (iOS), or **DMG** (Mac) from [GitHub Releases](https://github.com/sheeshcake/Flickv4/releases). Files are named `Flick-<version>.apk`, `Flick-<version>.ipa`, and `Flick-<version>.dmg`.

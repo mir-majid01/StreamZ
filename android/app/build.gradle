@@ -32,6 +32,52 @@ def dotenv = loadDotEnv("${projectRoot}/.env")
 def envVersionName = (dotenv.APP_VERSION ?: "0.0.0").toString().trim()
 def envVersionCode = (dotenv.ANDROID_VERSION_CODE ?: "1").toString().trim().toInteger()
 
+def releaseSigningValue = { String name ->
+    def value = providers.environmentVariable(name).orNull
+    return value == null ? null : value.toString().trim()
+}
+
+def releaseStoreFileValue = releaseSigningValue("STREAMZ_RELEASE_STORE_FILE")
+def releaseStorePassword = releaseSigningValue("STREAMZ_RELEASE_STORE_PASSWORD")
+def releaseKeyAlias = releaseSigningValue("STREAMZ_RELEASE_KEY_ALIAS")
+def releaseKeyPassword = releaseSigningValue("STREAMZ_RELEASE_KEY_PASSWORD")
+def releaseSigningConfigured = [
+    releaseStoreFileValue,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+].every { it != null && !it.isEmpty() }
+def releaseStoreFile = releaseStoreFileValue ? file(releaseStoreFileValue) : null
+def releaseSigningError = "Release signing is required. Set STREAMZ_RELEASE_STORE_FILE, STREAMZ_RELEASE_STORE_PASSWORD, STREAMZ_RELEASE_KEY_ALIAS, and STREAMZ_RELEASE_KEY_PASSWORD; refusing to use android/app/debug.keystore."
+
+def releaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    taskName.toLowerCase().contains("release")
+}
+if (releaseTaskRequested) {
+    if (!releaseSigningConfigured) {
+        throw new GradleException(releaseSigningError)
+    }
+    if (releaseStoreFile == null || !releaseStoreFile.isFile()) {
+        throw new GradleException("Release signing keystore was not found at '${releaseStoreFileValue}'. Set STREAMZ_RELEASE_STORE_FILE to an existing file.")
+    }
+}
+
+// Check the resolved task graph so debug builds keep their local debug key,
+// while every release task fails before Gradle can produce an unsigned or
+// debug-signed artifact.
+gradle.taskGraph.whenReady { taskGraph ->
+    def releaseRequested = taskGraph.allTasks.any { task ->
+        task.name.toLowerCase().contains("release")
+    }
+    if (!releaseRequested) return
+    if (!releaseSigningConfigured) {
+        throw new GradleException(releaseSigningError)
+    }
+    if (releaseStoreFile == null || !releaseStoreFile.isFile()) {
+        throw new GradleException("Release signing keystore was not found at '${releaseStoreFileValue}'. Set STREAMZ_RELEASE_STORE_FILE to an existing file.")
+    }
+}
+
 /**
  * This is the configuration block to customize your React Native Android app.
  * By default you don't need to apply any configuration, just uncomment the lines you need.
@@ -134,15 +180,23 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        if (releaseSigningConfigured) {
+            release {
+                storeFile releaseStoreFile
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
     }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            if (releaseSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
             def enableShrinkResources = findProperty('android.enableShrinkResourcesInReleaseBuilds') ?: 'false'
             shrinkResources enableShrinkResources.toBoolean()
             minifyEnabled enableMinifyInReleaseBuilds

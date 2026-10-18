@@ -51,11 +51,11 @@ const TMDB_TIMEOUT_MS = 15000;
 const GITHUB_OWNER =
   process.env.GITHUB_REPO_OWNER ||
   process.env.EXPO_PUBLIC_UPDATE_REPO_OWNER ||
-  'sheeshcake';
+  'mir-majid01';
 const GITHUB_REPO =
   process.env.GITHUB_REPO_NAME ||
   process.env.EXPO_PUBLIC_UPDATE_REPO_NAME ||
-  'Flickv4';
+  'StreamZ';
 const APP_RELEASE_CACHE_MS = 10 * 60 * 1000;
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const CODE_LENGTH = 5;

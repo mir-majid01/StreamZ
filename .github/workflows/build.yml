@@ -1,6 +1,10 @@
 # Native release builds. Required repository secrets:
 #   EXPO_PUBLIC_TMDB_API_KEY
 #   EXPO_PUBLIC_WYZIE_API_KEY
+#   RELEASE_KEYSTORE_BASE64
+#   RELEASE_KEYSTORE_PASSWORD
+#   RELEASE_KEY_ALIAS
+#   RELEASE_KEY_PASSWORD
 # Optional:
 #   EXPO_PUBLIC_WATCH_PARTY_URL
 #
@@ -12,8 +16,7 @@ name: Build Android & iOS
 
 on:
   push:
-    branches:
-      - v2.x.x
+    branches: [main]
   workflow_dispatch:
     inputs:
       app_version:
@@ -25,7 +28,7 @@ on:
         required: false
         type: string
       create_release:
-        description: Create a GitHub Release (always true on merge to v2.x.x).
+        description: Create a GitHub Release (always true on merge to main).
         required: false
         type: boolean
         default: false
@@ -131,13 +134,36 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Prepare release signing
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          : "${RELEASE_KEYSTORE_BASE64:?RELEASE_KEYSTORE_BASE64 is required for assembleRelease}"
+          : "${RELEASE_KEYSTORE_PASSWORD:?RELEASE_KEYSTORE_PASSWORD is required for assembleRelease}"
+          : "${RELEASE_KEY_ALIAS:?RELEASE_KEY_ALIAS is required for assembleRelease}"
+          : "${RELEASE_KEY_PASSWORD:?RELEASE_KEY_PASSWORD is required for assembleRelease}"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/streamz-release.keystore"
+          test -s "$RUNNER_TEMP/streamz-release.keystore"
+
       - name: Assemble release APK
         working-directory: android
         env:
           ORG_GRADLE_PROJECT_reactNativeArchitectures: armeabi-v7a,arm64-v8a
+          STREAMZ_RELEASE_STORE_FILE: ${{ runner.temp }}/streamz-release.keystore
+          STREAMZ_RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          STREAMZ_RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+          STREAMZ_RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease --no-daemon
+
+      - name: Remove release keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/streamz-release.keystore"
 
       - name: Rename APK
         run: |

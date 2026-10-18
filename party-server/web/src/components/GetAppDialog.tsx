@@ -22,7 +22,7 @@ interface AppRelease {
 }
 
 const FALLBACK_RELEASE =
-  'https://github.com/sheeshcake/Flickv4/releases/latest';
+  'https://github.com/mir-majid01/StreamZ/releases/latest';
 
 type PlatformKind = 'download' | 'web' | 'unavailable';
 type DownloadAsset = 'apk' | 'ipa' | 'dmg';

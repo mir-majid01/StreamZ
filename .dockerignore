@@ -1,0 +1,17 @@
+.git
+.expo
+**/node_modules
+**/.env
+**/.env.*
+!.env.example
+**/build
+**/dist
+party-server/public
+android/.gradle
+android/app/build
+*.apk
+*.ipa
+*.dmg
+*.keystore
+*.jks
+*firebase-adminsdk*.json

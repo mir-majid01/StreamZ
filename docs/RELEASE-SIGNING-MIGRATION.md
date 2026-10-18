@@ -1,18 +1,19 @@
 # Release signing: current state, migration cost, and the plan
 
-Status: **planning only.** No keystore has been generated, no signing configuration has been
-changed, and nothing here has been deployed. The owner approved preparing a production key subject
-to the safeguards below; generation waits for a separate go-ahead after the installation situation
-and recovery plan have been read and agreed.
+Status: **signing guard applied; key provisioning still outstanding.** No keystore has been
+generated or committed. The Android build now keeps the debug key for debug builds only, requires
+environment-provided release signing inputs, and fails before any release task can produce an
+artifact without them. CI decodes its protected keystore into a temporary runner path and removes it
+after Gradle. The owner still needs to provision the production key and its protected secrets.
 
 ## 1. What signs StreamZ today
 
 | Fact | Evidence |
 | --- | --- |
-| Release builds are signed with the **debug** key | `android/app/build.gradle` — `signingConfigs.debug { storeFile file('debug.keystore'); storePassword 'android'; keyAlias 'androiddebugkey'; keyPassword 'android' }`, and `buildTypes.release { signingConfig signingConfigs.debug }` |
+| Release builds cannot run without a release key | `android/app/build.gradle` keeps `signingConfigs.debug` for `buildTypes.debug` only, and requires `STREAMZ_RELEASE_STORE_FILE`, `STREAMZ_RELEASE_STORE_PASSWORD`, `STREAMZ_RELEASE_KEY_ALIAS`, and `STREAMZ_RELEASE_KEY_PASSWORD` for release tasks |
 | The keystore is committed to git | `git ls-files` returns `android/app/debug.keystore` and nothing else matching `*.keystore`/`*.jks` |
 | Its identity | `CN=Android Debug, OU=Android, O=Unknown, L=Unknown, ST=Unknown, C=US`, valid 2014-01-01 → 2052-05-01, certificate SHA-256 `fac61745dc0903786fb9ede62a962b399f7348f0bb6f899b8332667591033b9c` |
-| CI has **no signing step at all** | `.github/workflows/android-ci.yml` contains no keystore, no password, no `apksigner`; it runs `assembleRelease` and uploads artifacts. There is nothing that could fail, so it silently produces debug-signed "release" builds |
+| CI requires protected release signing inputs | `.github/workflows/android-ci.yml` and `.github/workflows/build.yml` require `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`, decode only to the runner temp directory, and remove the file after Gradle |
 | Every APK so far carries that one certificate | Measured, not inferred — see §2 |
 | The admin app is separate | `stream.z.admin` is installed too and is signed by a *different* debug certificate (`65175c193ea1a6558bf06bcd315e0b324def6b43aac7385246f4b4ed09cc2c60`), from its own project. A `stream.z` key change does not touch it, and it likewise has no production key |
 
@@ -94,20 +95,21 @@ problem does not recur.
    the debug keystore in git is *already* public, which is the argument for never shipping another
    debug-signed build to anyone.
 
-## 5. Plan — wiring it so a debug fallback is impossible
+## 5. Wiring it so a debug fallback is impossible
 
-Not applied yet; each item is a reviewable change.
+The signing guard and CI wiring below are applied. Key generation and custody are intentionally still
+separate from source control.
 
-1. `android/app/build.gradle`: read four environment values — `STREAMZ_RELEASE_STORE_FILE`,
+1. `android/app/build.gradle`: reads four environment values — `STREAMZ_RELEASE_STORE_FILE`,
    `STREAMZ_RELEASE_STORE_PASSWORD`, `STREAMZ_RELEASE_KEY_ALIAS`, `STREAMZ_RELEASE_KEY_PASSWORD` —
-   and define `signingConfigs.release` from them. Then in `buildTypes.release`, **fail the build**
-   when they are absent:
-   `if (!providers.environment.variable("STREAMZ_RELEASE_STORE_FILE").isPresent) throw GradleException("refusing to produce a release build signed with the debug key")`.
-   The guard belongs in Gradle rather than in the workflow so that a local `assembleRelease` is
-   covered too, and so the failure cannot be bypassed by editing one YAML file.
-2. Keep `debug` for `buildTypes.debug` only. Nothing in the repo should ever be able to produce a
+   and defines `signingConfigs.release` from them. Explicit release task names fail during Gradle
+   configuration when any value is absent; the resolved task graph repeats the same check for broad
+   invocations such as `assemble`. The guard belongs in Gradle rather than only in the workflow so
+   local release commands are covered too, and so the failure cannot be bypassed by editing one YAML
+   file.
+2. `debug` is kept for `buildTypes.debug` only. Nothing in the repo should ever be able to produce a
    file that looks like a release and is debug-signed.
-3. `.github/workflows/android-ci.yml`: store the keystore as a **protected** repository secret
+3. `.github/workflows/android-ci.yml` and `.github/workflows/build.yml`: store the keystore as a **protected** repository secret
    (`RELEASE_KEYSTORE_BASE64`) plus `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`,
    `RELEASE_KEY_PASSWORD`. Decode to a temp file outside the workspace, pass the env vars to Gradle,
    delete it in `always()`. Add a step before the build that fails when the secret is empty — the

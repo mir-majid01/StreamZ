@@ -44,8 +44,8 @@ describe('brand config', () => {
     expect(LEGAL.sampleCredit).toMatch(/Blender Foundation/);
   });
 
-  it('keeps the deferred surfaces off (Live TV is now restored)', () => {
-    expect(FEATURES).toEqual({ liveTv: true, watchParty: false, tvLayout: false, updateChecker: false });
+  it('keeps deferred surfaces off while the verified updater is enabled', () => {
+    expect(FEATURES).toEqual({ liveTv: true, watchParty: false, tvLayout: false, updateChecker: true });
   });
 });
 
@@ -67,8 +67,8 @@ describe('feature flags gate the surfaces they name', () => {
     expect(isTVLayout).toBe(false);
   });
 
-  it('ships no repository for the updater, so it can never point at another project', () => {
-    expect(UPDATE_CONFIG.enabled).toBe(false);
+  it('keeps the updater source unowned until the release policy names one', () => {
+    expect(UPDATE_CONFIG.enabled).toBe(true);
     // Nothing is baked in: the upstream Flick repository used to be the default, which
     // meant a StreamZ build with the flag flipped would hand its users somebody else's
     // APK. The owner has to name their own releases through the environment.

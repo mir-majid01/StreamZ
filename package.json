@@ -1,6 +1,9 @@
 {
   "name": "flick",
   "version": "2.1.5",
+  "engines": {
+    "node": "22.13.x"
+  },
   "main": "index.ts",
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^15.0.2",
@@ -88,6 +91,7 @@
     "macos:dmg": "bash macos/package-dmg.sh",
     "web": "expo start --web",
     "test": "jest",
+    "test:offline": "jest --ci --runInBand",
     "typecheck": "tsc --noEmit",
     "postinstall": "patch-package",
     "test:watch": "jest --watch",
