@@ -38,6 +38,7 @@ describe('release delivery configuration', () => {
     expect(website).toContain('https://github.com/mir-majid01/StreamZ/releases/latest');
     expect(server).toContain("process.env.EXPO_PUBLIC_UPDATE_REPO_OWNER ||\n  'mir-majid01'");
     expect(server).toContain("process.env.EXPO_PUBLIC_UPDATE_REPO_NAME ||\n  'StreamZ'");
+    expect(read('README.md')).toContain('https://github.com/mir-majid01/StreamZ/releases');
     expect(website).not.toContain('sheeshcake/Flickv4/releases/latest');
     expect(server).not.toContain("'sheeshcake'");
   });

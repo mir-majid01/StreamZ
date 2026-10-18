@@ -206,17 +206,16 @@ npm --prefix functions run build
 npx firebase deploy --only functions,firestore
 ```
 
-The in-app updater remains opt-in: both `EXPO_PUBLIC_UPDATE_REPO_OWNER` and
-`EXPO_PUBLIC_UPDATE_REPO_NAME` are blank by default, and
-`FEATURES.updateChecker` remains disabled until a real release policy and
-release signing identity have been verified. The website's offline release
-fallback points to this repository (`mir-majid01/StreamZ`).
+The in-app updater points at this repository (`mir-majid01/StreamZ`) and is
+enabled in `FEATURES.updateChecker`. It remains fail-closed until a real
+release policy and release signing identity have been verified. The website's
+offline release fallback points to the same repository.
 
 ---
 
 ## Installation
 
-Grab the latest **APK** (Android), **IPA** (iOS), or **DMG** (Mac) from [GitHub Releases](https://github.com/sheeshcake/Flickv4/releases). Files are named `Flick-<version>.apk`, `Flick-<version>.ipa`, and `Flick-<version>.dmg`.
+Grab the latest **APK** (Android), **IPA** (iOS), or **DMG** (Mac) from [GitHub Releases](https://github.com/mir-majid01/StreamZ/releases). Files are named `Flick-<version>.apk`, `Flick-<version>.ipa`, and `Flick-<version>.dmg`.
 
 ### Android
 
@@ -245,7 +244,7 @@ Follow SideStore’s official guides for the computer step — they change more 
 
 Then install Flick:
 
-1. On the iPhone or iPad, download `Flick-<version>.ipa` from [GitHub Releases](https://github.com/sheeshcake/Flickv4/releases) (Safari or Files). AirDrop from a Mac works too.
+1. On the iPhone or iPad, download `Flick-<version>.ipa` from [GitHub Releases](https://github.com/mir-majid01/StreamZ/releases) (Safari or Files). AirDrop from a Mac works too.
 2. Open **LocalDevVPN** and tap **Connect**. Leave it on for the rest of these steps.
 3. Open **SideStore** → **My Apps** → **+** (top of the screen).
 4. Choose the Flick IPA from Files.
