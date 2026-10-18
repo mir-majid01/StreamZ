@@ -47,6 +47,7 @@ import {
 } from '@/src/services/liveTv/playbackError';
 import {
   resourceKindFromProbe,
+  type StreamProbeChain,
   type StreamProbeResult,
   type StreamResourceKind,
 } from '@/src/services/liveTv/streamProbe';
@@ -105,6 +106,12 @@ export interface PlaybackFailure {
   bodyPreview: string | null;
   bodyPreviewTruncated: boolean;
   resourceKind: StreamResourceKind | null;
+  /**
+   * Which resource refused, when the probe found the refusal below the published address:
+   * `encryption-key`, `media-playlist` or `segment` rather than `manifest`. Null means the top-level
+   * address is the one that answered, or nothing deeper was observed.
+   */
+  refusedResource: StreamResourceKind | null;
   /** True when the retry-path GET received a successful 2xx response. */
   probeSucceeded: boolean;
   /** True when a native player error remains after a successful 2xx probe. */
@@ -122,6 +129,13 @@ export interface PlaybackFailureInput {
   url?: string | null;
   /** Observation from the retry-path probe. Absent for the first playback. */
   probe?: StreamProbeResult | null;
+  /**
+   * The same probe, one level deeper: the first resource the published address points the player
+   * at (an encryption key, a variant playlist, a segment). This is what separates "the address is
+   * fine" from "the stream is fine" — a 200 on the listing says nothing about the video request,
+   * and geo-restricted broadcasters refuse exactly the second one.
+   */
+  chain?: StreamProbeChain | null;
   /**
    * Did the player ever report the stream loaded? Distinguishes "the stream never opened" from
    * "the stream died under a running player", which media3's catch-all IO codes do not.
@@ -279,9 +293,22 @@ const sentence = (
     probe?: StreamProbeResult | null;
     media3Name: string | null;
     probeSucceeded: boolean;
+    /** Set when the refusal the probe found was below the published address. */
+    refusedResource?: StreamResourceKind | null;
   },
 ): string => {
   const who = parts.host ?? 'This channel';
+  // What the player asked for after the address in the channel list. Named in the sentence because
+  // "the channel refused you" and "the channel's video request refused you" are different facts,
+  // and only the second one explains a 200 on the listing next to a playback failure.
+  const refused =
+    parts.refusedResource === 'encryption-key'
+      ? 'its encryption key'
+      : parts.refusedResource === 'media-playlist'
+        ? 'the video list behind that address'
+        : parts.refusedResource === 'segment'
+          ? 'a video segment'
+          : null;
   switch (category) {
     case 'dns-or-unreachable':
       // Three different amounts of evidence, three different sentences. The DNS wording is
@@ -322,6 +349,11 @@ const sentence = (
       }
       return `${who} broadcasts in a format this device cannot play.`;
     case 'invalid-manifest':
+      // A 200 whose body is not a playlist is its own finding: the address is alive, and what it
+      // serves is a page. Saying "unparsable stream index" would blame the player for a dead entry.
+      if (parts.probeSucceeded && parts.probe?.resourceKind === 'other') {
+        return `${who} answered HTTP 200 but sent a web page, not a stream. The address in the channel list no longer points at playable media.`;
+      }
       return parts.media3Name === 'ERROR_CODE_PARSING_CONTAINER_MALFORMED'
         ? `The data ${who} sent is not a readable stream. The feed is broken at the publisher.`
         : `${who}'s stream index could not be parsed. The feed is broken at the publisher.`;
@@ -330,6 +362,13 @@ const sentence = (
     case 'access-rejected':
       if (parts.media3Name === 'ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED') {
         return `${who} only serves plain HTTP, and this device will not play an unsecured stream.`;
+      }
+      if (refused) {
+        // The listing was served; the media behind it was not. That is a broadcaster-side rule about
+        // who may watch, which no retry and no app change can answer.
+        return parts.status
+          ? `${who} gave out the channel address but refused ${refused} (HTTP ${parts.status}). This feed is restricted by the publisher, so it will not play here.`
+          : `${who} gave out the channel address but refused ${refused}. This feed is restricted by the publisher, so it will not play here.`;
       }
       return parts.status
         ? `${who} refused this device (HTTP ${parts.status}). The stream is geo-blocked, or its access token is missing or spent.`
@@ -385,13 +424,46 @@ export const classifyPlaybackFailure = (
       ? probe.status
       : null;
   const httpStatus = probeStatus ?? diagnostics.httpStatus;
+
+  const probeSucceeded =
+    probe?.observation === 'answered' && httpStatus !== null && httpStatus >= 200 && httpStatus <= 299;
+  const resourceKind = probe
+    ? probe.resourceKind ??
+      resourceKindFromProbe({
+        url: probe.finalUrl,
+        contentType: probe.contentType,
+        bodyPreview: probe.bodyPreview,
+      })
+    : null;
+
+  // The request the player makes *after* the published address. A geo-restricted broadcaster answers
+  // the listing and refuses the video; media3 then reports one BAD_HTTP_STATUS and cannot say which
+  // request it was about. When the listing was fine and the child refused, the child is the evidence.
+  const child = input.chain?.child ?? null;
+  const childStatus =
+    typeof child?.status === 'number' && Number.isInteger(child.status) && child.status >= 100 && child.status <= 599
+      ? child.status
+      : null;
+  const refusedBelowListing = probeSucceeded && childStatus !== null && childStatus >= 400;
+  const refusedResource: StreamResourceKind | null = refusedBelowListing
+    ? input.chain?.childKind ?? null
+    : null;
+  const decidingStatus = refusedBelowListing ? childStatus : httpStatus;
+
   if (media3Name === 'ERROR_CODE_IO_BAD_HTTP_STATUS') {
-    category = httpStatus === null ? 'http-error' : categoryFromHttpStatus(httpStatus);
+    category = decidingStatus === null ? 'http-error' : categoryFromHttpStatus(decidingStatus);
+    // The address answered 200 and sent something that is not a playlist at all — a captive
+    // portal, an error page, a bare directory listing. That is a broken resource, not an
+    // unclassifiable HTTP status, and saying so is the difference between "no rule for this" and
+    // an answer the owner can act on.
+    if (probeSucceeded && !refusedBelowListing && resourceKind === 'other') {
+      category = 'invalid-manifest';
+    }
   }
   if (media3Name === 'ERROR_CODE_IO_FILE_NOT_FOUND') {
     // media3 reached this through a file-not-found path, so the player itself named the condition
     // and no probe is needed to say so.
-    category = httpStatus === null ? 'stream-gone' : categoryFromHttpStatus(httpStatus);
+    category = decidingStatus === null ? 'stream-gone' : categoryFromHttpStatus(decidingStatus);
   }
 
   if (category === null) {
@@ -406,44 +478,37 @@ export const classifyPlaybackFailure = (
       // No bucket says "TLS"; the handshake failing is a refusal by the endpoint, and `unknown`
       // with the honest sentence is used rather than stretching a category.
       category = 'unknown';
+    } else if (refusedBelowListing && decidingStatus !== null) {
+      category = categoryFromHttpStatus(decidingStatus);
     } else if (probe?.observation === 'answered' && httpStatus !== null && httpStatus >= 400) {
       category = categoryFromHttpStatus(httpStatus);
     } else {
       category = 'unknown';
     }
   }
-
-  const probeSucceeded =
-    probe?.observation === 'answered' && httpStatus !== null && httpStatus >= 200 && httpStatus <= 299;
-  const resourceKind = probe
-    ? probe.resourceKind ??
-      resourceKindFromProbe({
-        url: probe.finalUrl,
-        contentType: probe.contentType,
-        bodyPreview: probe.bodyPreview,
-      })
-    : null;
   return {
     category,
     message: sentence(category, {
       host,
-      status: httpStatus,
+      status: decidingStatus,
       contentType: probe?.contentType ?? null,
       probe,
       media3Name,
       probeSucceeded,
+      refusedResource,
     }),
     transient: TRANSIENT_CATEGORIES.has(category),
     codeName: media3Name,
     code,
     host,
-    status: httpStatus,
+    status: decidingStatus,
     nativeException: diagnostics.nativeException,
     finalUrl: probe?.finalUrl ?? null,
     contentType: probe?.contentType ?? null,
     bodyPreview: probe?.bodyPreview ?? null,
     bodyPreviewTruncated: probe?.bodyPreviewTruncated ?? false,
     resourceKind,
+    refusedResource,
     probeSucceeded,
     probeMismatch: probeSucceeded && diagnostics.detail !== null,
     // Only a throttle asks for a wait by name. Everything else keeps the schedule's own cadence,

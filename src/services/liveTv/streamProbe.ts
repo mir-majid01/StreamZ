@@ -310,7 +310,16 @@ export const resourceKindFromProbe = (input: {
 /** Alias with an imperative name for callers that classify a response before storing it. */
 export const classifyResourceKind = resourceKindFromProbe;
 
-type BodyPreview = Readonly<{ text: string | null; truncated: boolean }>;
+type BodyPreview = Readonly<{
+  text: string | null;
+  truncated: boolean;
+  /**
+   * The same bytes before redaction, kept off every result. A diagnostic field has to lose
+   * its URLs; the chain walk below needs the child URI the playlist actually named, so it is
+   * handed to one caller as a local and never stored, logged, or returned.
+   */
+  raw: string | null;
+}>;
 
 const decodeChunk = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -350,7 +359,7 @@ const readBodyPreview = async (
         // The response is still aborted by the caller after the preview attempt.
       }
     }
-    return { text: raw ? redactDiagnosticText(raw, maxChars) : null, truncated };
+    return { text: raw ? redactDiagnosticText(raw, maxChars) : null, truncated, raw: raw || null };
   }
 
   if (response.text) {
@@ -360,12 +369,13 @@ const readBodyPreview = async (
       return {
         text: text ? redactDiagnosticText(text, maxChars) : null,
         truncated: text.length > maxChars,
+        raw: text ? text.slice(0, maxChars) : null,
       };
     } catch {
-      return { text: null, truncated: false };
+      return { text: null, truncated: false, raw: null };
     }
   }
-  return { text: null, truncated: false };
+  return { text: null, truncated: false, raw: null };
 };
 
 const headerValue = (res: ProbeResponseLike, name: string): string | null => {
@@ -406,6 +416,13 @@ export interface ProbeOptions {
    * stored as if it were a measurement.
    */
   signal?: AbortSignal;
+  /**
+   * Handed the unredacted response body, for the one caller that has to read a child URI out of a
+   * playlist. Redaction turns every URL into `<stream-url>`, which is correct for a diagnostic
+   * field and useless as a request target. Nothing may store this value on a result, log it, or
+   * return it: it exists so `probeStreamChain` can hold it in a local for one more request.
+   */
+  onRawBody?: (raw: string) => void;
 }
 
 /**
@@ -482,7 +499,7 @@ export const probeStream = async (
     });
     const status = parseStatus(res.status);
     const contentType = headerValue(res, 'content-type')?.toLowerCase() ?? null;
-    let preview: BodyPreview = { text: null, truncated: false };
+    let preview: BodyPreview = { text: null, truncated: false, raw: null };
     // A Response can expose headers before a body that never completes. Race the body read against
     // the same deadline so the retry path remains bounded even when a test/native implementation
     // does not reject its reader on AbortController.abort().
@@ -494,7 +511,10 @@ export const probeStream = async (
         preview = await Promise.race([
           bodyRead,
           new Promise<BodyPreview>((resolve) => {
-            bodyTimer = setTimeout(() => resolve({ text: null, truncated: false }), remaining);
+            bodyTimer = setTimeout(
+              () => resolve({ text: null, truncated: false, raw: null }),
+              remaining,
+            );
           }),
         ]);
       } finally {
@@ -515,7 +535,7 @@ export const probeStream = async (
 
     const rawFinalUrl = typeof res.url === 'string' && res.url ? res.url : url;
     const finalUrl = redactFinalUrl(rawFinalUrl);
-    return {
+    const result: StreamProbeResult = {
       observation: 'answered',
       host,
       ms: Math.max(0, now() - startedAt),
@@ -533,6 +553,14 @@ export const probeStream = async (
         bodyPreview: preview.text,
       }),
     };
+    if (preview.raw) {
+      try {
+        options.onRawBody?.(preview.raw);
+      } catch {
+        // A caller that cannot handle the body it asked for still gets the ordinary result.
+      }
+    }
+    return result;
   };
 
   const cancelledResult = (): StreamProbeResult => ({
@@ -612,4 +640,147 @@ export const containerHintFromProbe = (
     return type === 'application/octet-stream' ? null : 'progressive';
   }
   return null;
+};
+
+// ── The one level below the address the catalogue published ────────────────
+
+const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/** Resolve a playlist reference against the parent URL the player was handed. */
+export const resolvePlaylistChild = (parentUrl: string, reference: string): string | null => {
+  const ref = reference.trim();
+  // A query-bearing token is normal here: signed HLS segment URLs are the common case. What must
+  // never happen is the *result* being logged — probe results carry only a redacted final URL.
+  if (!ref || ref.startsWith('#') || ref.startsWith('data:')) return null;
+  try {
+    return HAS_SCHEME.test(ref) ? ref : new URL(ref, parentUrl).toString();
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Split a playlist body into records.
+ *
+ * The probe preview is deliberately one line — it collapses newlines to keep a 512-character
+ * budget useful — so splitting on `\n` alone would read a whole master playlist as a single tag and
+ * find nothing in it. When no newline survives, the records are split back apart at the `#EXT`
+ * boundary every HLS tag starts with.
+ */
+const playlistRecords = (body: string): string[] => {
+  const text = body.replace(/\r\n?/g, '\n');
+  const parts = text.includes('\n') ? text.split('\n') : text.split(/(?=#EXT)/i);
+  return parts.map((part) => part.trim()).filter((part) => part.length > 0);
+};
+
+/**
+ * The URI a record carries after its attributes, or '' when the URI is a record of its own.
+ *
+ * `CODECS="avc1.640028, mp4a.40.2"` contains a space inside quotes, which is why the attributes are
+ * cut at the last closing quote when there is one rather than at the first space.
+ */
+const uriAfterTag = (record: string): string => {
+  if (!record.startsWith('#')) return record;
+  const lastQuote = record.lastIndexOf('"');
+  if (lastQuote > 0) return record.slice(lastQuote + 1).trim();
+  return record.replace(/^#EXT\S*/i, '').trim();
+};
+
+/**
+ * The first thing a player asks for *after* the address in the channel list.
+ *
+ * Order matters, because it is the order media3 issues them: an `#EXT-X-KEY` URI is fetched before
+ * any media and a refused key stops playback on its own; the variant line under `#EXT-X-STREAM-INF`
+ * is next for a master playlist; a bare URI is a segment. Returning the first of those the body
+ * actually contains is what lets a `200` on the top-level address be reported for what it is —
+ * evidence about one request, not about the stream.
+ *
+ * The body is a 512-character preview, so a long master may not contain the child. Absent evidence
+ * the walk stops and says nothing, which is the correct answer.
+ */
+export const firstPlaylistChildOf = (
+  body: string | null | undefined,
+  parentUrl: string,
+): { url: string; kind: StreamResourceKind } | null => {
+  if (!body) return null;
+  const records = playlistRecords(body);
+
+  for (const record of records) {
+    const quoted = /#EXT-X-KEY:[^\n]*URI="([^"]+)"/i.exec(record)?.[1];
+    if (quoted) {
+      const url = resolvePlaylistChild(parentUrl, quoted);
+      if (url) return { url, kind: 'encryption-key' };
+    }
+  }
+
+  for (let i = 0; i < records.length; i += 1) {
+    if (!/#EXT-X-STREAM-INF\b/i.test(records[i])) continue;
+    const reference = uriAfterTag(records[i]) || records[i + 1] || '';
+    const url = resolvePlaylistChild(parentUrl, reference);
+    if (url) return { url, kind: 'media-playlist' };
+  }
+
+  for (let i = 0; i < records.length; i += 1) {
+    const record = records[i];
+    if (record.startsWith('#')) {
+      // Only `#EXTINF` puts its own media on the same record; anything else that follows a tag is
+      // an attribute of that tag, not a resource to fetch.
+      const trailing = uriAfterTag(record);
+      if (!trailing || !/#EXTINF\b/i.test(record)) continue;
+      const url = resolvePlaylistChild(parentUrl, trailing);
+      if (url) return { url, kind: 'segment' };
+      continue;
+    }
+    const url = resolvePlaylistChild(parentUrl, record);
+    if (url) return { url, kind: 'segment' };
+  }
+
+  return null;
+};
+
+export interface StreamProbeChain {
+  /** The address the catalogue published — the one the player was handed. */
+  top: StreamProbeResult;
+  /** The first request the player makes after that, when the top answer named one. */
+  child: StreamProbeResult | null;
+  childKind: StreamResourceKind | null;
+}
+
+/**
+ * Ask the host twice, at most: the published address, then the first resource that address points
+ * at. Bounded by design — this runs on the error path of a single playback attempt, on a phone,
+ * against a CDN that may be doing the refusing.
+ */
+export const probeStreamChain = async (
+  url: string | null | undefined,
+  options: ProbeOptions = {},
+): Promise<StreamProbeChain | null> => {
+  let rawTop: string | null = null;
+  const top = await probeStream(url, {
+    ...options,
+    onRawBody: (raw): void => {
+      rawTop = raw;
+    },
+  });
+  if (!top) return null;
+
+  const status = top.status ?? 0;
+  const answeredWell = top.observation === 'answered' && status >= 200 && status <= 299;
+  const namesAChild = top.resourceKind === 'manifest' || top.resourceKind === 'media-playlist';
+  if (!answeredWell || !namesAChild || !top.bodyPreview) {
+    return { top, child: null, childKind: null };
+  }
+  // The user may have left the channel while the first request was in flight. A second request
+  // after that is a leak, not a diagnosis.
+  if (options.signal?.aborted) return { top, child: null, childKind: null };
+
+  // The unredacted body when we captured one: a redacted playlist has every URL replaced by
+  // `<stream-url>`, which reads as a real relative reference and would send the second request
+  // somewhere invented. The redacted preview is the fallback, and only useful when the child was a
+  // bare relative name.
+  const child = firstPlaylistChildOf(rawTop ?? top.bodyPreview, url ?? '');
+  if (!child) return { top, child: null, childKind: null };
+
+  const { onRawBody, ...childOptions } = options;
+  return { top, child: await probeStream(child.url, childOptions), childKind: child.kind };
 };

@@ -34,7 +34,7 @@ import {
   shouldRetry,
   type PlaybackFailure,
 } from '@/src/services/liveTv/playbackFailure';
-import { probeStream, type StreamProbeResult } from '@/src/services/liveTv/streamProbe';
+import { probeStreamChain, type StreamProbeChain, type StreamProbeResult } from '@/src/services/liveTv/streamProbe';
 import { FONT } from '@/src/theme/tokens';
 import { isTV } from '@/src/utils/tv';
 import type { RootStackScreenProps } from '@/src/navigation/types';
@@ -110,7 +110,8 @@ export const LivePlayerScreen = ({
    * Last pre-flight probe of the stream URL. Only ever set on the retry path, and it sharpens the
    * next classification and the source hint instead of blaming the user's connection.
    */
-  const [probe, setProbe] = useState<StreamProbeResult | null>(null);
+  const [chain, setChain] = useState<StreamProbeChain | null>(null);
+  const probe: StreamProbeResult | null = chain?.top ?? null;
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** The in-flight question to the stream host, so leaving the channel can cancel it. */
   const probeRef = useRef<AbortController | null>(null);
@@ -179,13 +180,13 @@ export const LivePlayerScreen = ({
    * `classifyPlaybackFailure` decides what it means.
    */
   const askTheHost = useCallback(
-    async (target: LiveStream, resourceUrl?: string | null): Promise<StreamProbeResult | null> => {
+    async (target: LiveStream, resourceUrl?: string | null): Promise<StreamProbeChain | null> => {
       const url = resourceUrl || target.url;
       if (!url) return null;
       const controller = new AbortController();
       probeRef.current = controller;
       try {
-        return await probeStream(url, {
+        return await probeStreamChain(url, {
           headers: target.headers,
           signal: controller.signal,
         });
@@ -211,7 +212,7 @@ export const LivePlayerScreen = ({
     cancelProbe();
     autoRetriesRef.current = 0;
     playbackStartedRef.current = false;
-    setProbe(null);
+    setChain(null);
     setRetriesSpent(null);
     setRetryNotice(null);
     setPlaybackDiagnostics(null);
@@ -293,7 +294,7 @@ export const LivePlayerScreen = ({
       if (target?.url) {
         const result = await askTheHost(target);
         if (!mountedRef.current || requestId !== requestIdRef.current) return;
-        setProbe(result ?? null);
+        setChain(result ?? null);
       }
       if (!mountedRef.current || requestId !== requestIdRef.current) return;
       playbackStartedRef.current = false;
@@ -321,6 +322,7 @@ export const LivePlayerScreen = ({
         payload,
         url,
         probe,
+        chain,
         playbackStarted: playbackStartedRef.current,
       });
 
@@ -336,11 +338,12 @@ export const LivePlayerScreen = ({
         const answer = await askTheHost(stream, failedResourceUrl);
         if (!mountedRef.current || requestId !== requestIdRef.current) return;
         if (answer) {
-          setProbe(answer);
+          setChain(answer);
           classified = classifyPlaybackFailure({
             payload,
             url,
-            probe: answer,
+            probe: answer.top,
+            chain: answer,
             playbackStarted: playbackStartedRef.current,
           });
         }
