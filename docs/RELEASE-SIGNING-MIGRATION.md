@@ -1,10 +1,28 @@
 # Release signing: current state, migration cost, and the plan
 
-Status: **signing guard applied; key provisioning still outstanding.** No keystore has been
-generated or committed. The Android build now keeps the debug key for debug builds only, requires
-environment-provided release signing inputs, and fails before any release task can produce an
-artifact without them. CI decodes its protected keystore into a temporary runner path and removes it
-after Gradle. The owner still needs to provision the production key and its protected secrets.
+Status: **signing guard applied; production key generated 2026-10-18, secrets not yet in CI.**
+The Android build keeps the debug key for debug builds only, requires environment-provided release
+signing inputs, and fails before any release task can produce an artifact without them. CI decodes
+its protected keystore into a temporary runner path and removes it after Gradle.
+
+The release key exists now and is **not** in this repository — a committed keystore is the exact
+thing this document argues against:
+
+| | |
+| --- | --- |
+| File | `C:\Users\HP\streamz-release-key\streamz-release.keystore` (2,762 bytes, outside the repo) |
+| Alias | `streamz-release` |
+| Certificate | `CN=StreamZ, OU=Releases, O=StreamZ, C=IN`, RSA 2048, valid 2026-10-18 → 2054-03-05 |
+| Certificate SHA-256 | `9a883be09b1e3c90f26e6c907b86338078d25b6940b484c9992b24b7c7c511d4` |
+| Password | `keystore-password.txt` beside it (same value for store and key). Move it into a password manager and delete that file. |
+| Still owed by the owner | Four repository secrets — `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, `RELEASE_KEY_PASSWORD` — then one CI run produces the first release-signed APK |
+
+Two consequences, both irreversible in one direction. **Losing the keystore or its password ends
+every remote update path for every install carrying this certificate** — Android has no key reset.
+And because the fingerprint above differs from the debug certificate that signs every APK handed
+out so far (§2), a release-signed build **cannot** install over them: `INSTALL_FAILED_UPDATE_INCOMPATIBLE`,
+uninstall required, with the losses listed in §3. `signingCertSha256` in `releasePolicy/latest` must
+be this value, and the updater will keep refusing any APK whose measured certificate is not it.
 
 ## 1. What signs StreamZ today
 
