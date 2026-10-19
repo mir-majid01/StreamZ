@@ -263,7 +263,15 @@ export const getMatchSummary = (matchCount: number, hasQuery: boolean): string =
 export const clipQuery = (query: string, max = 24): string => {
   const trimmed = query.trim();
   if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max - 1).trimEnd()}…`;
+  const head = trimmed.slice(0, max - 1);
+  // End on a word boundary where one is available: the echoed query is a quotation
+  // of what the person typed, and "the quick brown fox ju…" reads as a bug. A
+  // boundary in the first half of the window is rejected, because dropping most of
+  // the echo to keep one whole word shows less, and a single over-long word has no
+  // boundary to find and is cut.
+  const atSpace = head.lastIndexOf(' ');
+  const body = atSpace >= Math.ceil(head.length / 2) ? head.slice(0, atSpace) : head;
+  return `${body.trimEnd()}…`;
 };
 
 // ── Empty states ───────────────────────────────────────────────────────────

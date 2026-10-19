@@ -267,6 +267,19 @@ describe('counts and summary lines', () => {
     expect(long.length).toBe(24);
     expect(long.endsWith('…')).toBe(true);
   });
+
+  it('ends the echoed query on a word, not in the middle of one', () => {
+    // The window lands inside "jumps", so the whole word goes rather than half of it.
+    expect(clipQuery('the quick brown fox jumps over the lazy dog')).toBe(
+      'the quick brown fox…',
+    );
+    // The only boundary in the window is one character in. Taking it would show a
+    // single word and hide the rest, so the long word is cut instead.
+    expect(clipQuery(`a ${'b'.repeat(30)}`)).toBe(`a ${'b'.repeat(21)}…`);
+    // Trimming happens before the cut, so leading and trailing space cannot push
+    // the ellipsis off the end.
+    expect(clipQuery('  the quick  brown fox jumps  ')).toBe('the quick  brown fox…');
+  });
 });
 
 describe('empty states are written, not improvised', () => {
