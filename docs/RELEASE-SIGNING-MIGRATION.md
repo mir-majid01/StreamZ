@@ -199,7 +199,31 @@ green. Every number below was read out of the finished artifact, not copied from
 | Release | <https://github.com/mir-majid01/StreamZ/releases/tag/v0.1.1>, asset `app-release.apk` |
 | Policy | `releasePolicy/latest` — `latestVersion 0.1.1`/code 2, `minimumSupportedVersion 0.1.0`/code 1, digest, size and certificate as above |
 | Anonymous reachability | `releases/latest` → 200, asset → 200 with `content-length: 81786306`, policy read with no auth → 200 |
-| Still open | verification step 3 (never observed the refusal directly), 5 (no second build yet, so the in-app update path is untested end to end), 6 (no tamper test) |
+| Still open | verification step 3 (never observed the refusal directly), 6 (no tamper test) |
+
+## 7b. v0.1.2, and what it proved
+
+CI run 43 on `9cf28d3`, both jobs green. `0.1.2` / versionCode 3, 81,786,758 bytes,
+sha256 `899eb05d771b85ddeadb310017111d2ccf380470bf961fbdc82b23dcb8a4c679`, signed by the
+same `9a883be0…` certificate, published as `v0.1.2` and mirrored into `releasePolicy/latest`.
+
+**Verification step 5 is closed, on a real device.** The phone held release-signed 0.1.1, the
+policy offered 0.1.2, and the in-app path downloaded, verified digest and certificate, and
+installed **over** the existing app with no uninstall and no loss of sign-in or activation.
+That is the first end-to-end proof of the remote update path, and it is the reason the
+signing key matters: it is what makes an over-install legal.
+
+Two facts learned the expensive way, both now in the code rather than only here:
+
+- `minimumSupportedVersion` stayed at `0.1.0`. `decideUpdate` turns `mandatory` into
+  `blocks: true`, and a debug-signed install cannot take a release-signed APK in place, so a
+  higher floor would have locked out exactly the devices that can only be updated by hand.
+- The updater fetches `releases/latest` and the asset **without a credential**, so a private
+  repository makes remote updates impossible no matter what the policy says.
+
+The owner has since chosen that an offered update is take-it-or-leave-it: no skip, no "Later",
+no back-gesture escape, and the skip *gate* removed as well, because a device that dismissed a
+release once would otherwise never be shown the one that replaced it.
 
 `minimumSupportedVersion` is deliberately `0.1.0`, not `0.1.1`: `decideUpdate` turns `mandatory` into
 `blocks: true`, and a debug-signed device **cannot** install this APK in place. Marking it mandatory
