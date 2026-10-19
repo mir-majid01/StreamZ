@@ -116,6 +116,9 @@ describe('livePlaybackDetail', () => {
     expect(diagnostics.httpStatus).toBe(403);
     expect(diagnostics.nativeException).toContain('Response code: 403');
     expect(diagnostics.nativeException).not.toContain('STACK-SECRET');
+    // The screen shows this text. Frames belong in a bug report, not in front of a viewer.
+    expect(diagnostics.nativeException).not.toContain('DefaultHttpDataSource.java');
+    expect(diagnostics.nativeException).not.toContain(' at ');
     expect(playbackErrorResourceUrl(payload)).toBe(
       'https://cdn.example/seg-001.ts?sig=STACK-SECRET',
     );

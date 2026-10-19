@@ -97,6 +97,9 @@ export const redactDiagnosticText = (
     )
     // JWT-like values can be logged without an obvious label.
     .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '<redacted-token>')
+    // Java frames say only which line of Media3 noticed the failure; the exception chain beside
+    // them already says what failed. They are the difference between evidence and a log dump.
+    .replace(/\bat\s+[A-Za-z_$][\w.$]*\s*\([^)\n]*\)/g, '')
     // Keep reports one line and remove control characters that could spoof report formatting.
     .replace(/[\u0000-\u001f\u007f]+/g, ' ')
     .replace(/\s+/g, ' ')
