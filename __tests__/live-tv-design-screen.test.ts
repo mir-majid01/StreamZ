@@ -64,6 +64,30 @@ describe('one control family, not two chip groups', () => {
   });
 });
 
+/**
+ * Measured on the Infinix (1224px wide, density 3) from the installed 0.1.2 build,
+ * through the accessibility tree rather than by eye: the `All` segment was 57px wide
+ * holding a 57px label, so its 16dp side padding had not arrived; the category chip
+ * was 23dp tall against `chipHeight: 36`; the channel row 47dp against
+ * `rowMinHeight: 72`; the star control 17dp against its 44dp target. Every one of
+ * those numbers is an inline `style` on a `LiveTvPressable`, and every one was
+ * dropped — because that prop was a function, and react-native-css merges a
+ * `className` with the inline style by placing both in one array, which React
+ * Native’s style flattener then discards.
+ */
+describe('the pressable keeps its geometry by never using a style callback', () => {
+  it('passes a plain style array, not a callback', () => {
+    expect(pressable).not.toMatch(/style=\{(\(|[A-Za-z_$][\w$]*\s*=>)/);
+    expect(pressable).toMatch(/style=\{\[[^\]]*\]\}/s);
+  });
+
+  it('still paints the pressed fill, now through the state it tracks', () => {
+    expect(pressable).toContain('onPressIn=');
+    expect(pressable).toContain('onPressOut=');
+    expect(pressable).toContain('pressed && !disabled ? pressedStyle : undefined');
+  });
+});
+
 describe('the header band and the search interaction', () => {
   it('gives the screen an identity line with the catalogue’s own numbers', () => {
     expect(screen).toContain('<LiveTvIdentityBar');

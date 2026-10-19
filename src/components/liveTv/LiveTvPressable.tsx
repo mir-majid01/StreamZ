@@ -10,8 +10,8 @@ interface LiveTvPressableProps {
   /** Applied only while the element holds TV focus, exactly like `Focusable`. */
   focusedClassName?: string;
   /**
-   * Painted while the finger is down. Read through the `Pressable` style callback
-   * rather than state, so pressing a row costs no re-render of that row.
+   * Painted while the finger is down. Applied through local state rather than
+   * `Pressable`'s style callback — see the note on `style` below.
    */
   pressedStyle?: ViewStyle;
   hitSlop?: Insets | number;
@@ -47,6 +47,7 @@ export const LiveTvPressable = ({
   style,
 }: LiveTvPressableProps) => {
   const [focused, setFocused] = useState(false);
+  const [pressed, setPressed] = useState(false);
 
   return (
     <Pressable
@@ -56,10 +57,15 @@ export const LiveTvPressable = ({
       accessibilityRole={role}
       accessibilityLabel={accessibilityLabel}
       accessibilityState={{ selected, disabled }}
-      style={(state) => [
-        state.pressed && !disabled ? pressedStyle : undefined,
-        style,
-      ]}
+      // `style` must not be a function. This element also carries a `className`, so
+      // react-native-css merges the two by putting both into one array — and a
+      // callback nested in an array is dropped when React Native flattens the
+      // style. Every pressable on this screen silently lost its padding, its
+      // minimum height and its 44dp touch target until this line stopped
+      // using the callback form.
+      style={[pressed && !disabled ? pressedStyle : undefined, style]}
+      onPressIn={() => setPressed(true)}
+      onPressOut={() => setPressed(false)}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
       onPress={onPress}

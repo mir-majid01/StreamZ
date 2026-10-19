@@ -72,7 +72,11 @@ export const LiveTvSegmented = <T extends string>({
           style={{
             borderRadius: RADIUS.md - LIVE_TV.trackInset,
             minHeight: LIVE_TV.trackHeight - LIVE_TV.trackInset * 2,
-            paddingHorizontal: SPACE.lg,
+            // 12dp, not 16: the scope row is content-sized and shares its line with
+            // the match count, and `All + Favorites + Recent` measured against the
+            // real labels needs 638px of the ~900 available. At 16dp it needs 1355
+            // and pushes the count off the edge.
+            paddingHorizontal: SPACE.md,
           }}
         >
           <StreamZText
