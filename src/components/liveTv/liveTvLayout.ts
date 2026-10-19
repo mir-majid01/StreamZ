@@ -178,6 +178,43 @@ export interface RowSecondary {
 }
 
 /**
+ * Group names that say nothing about the channel. IPTV playlists ship these literally —
+ * `undefined` is a real `group-title` value in the iptv-org feeds this app merges — and
+ * showing a viewer a category called "Undefined" reads as a bug in the app rather than a
+ * hole in the data.
+ *
+ * Deliberately narrow. `General` is left alone because it is arguable, and case is never
+ * rewritten because `BBC`, `HBO` and `TN` would come out wrong.
+ */
+const UNCATEGORISED_TOKENS = new Set([
+  'undefined',
+  'unknown',
+  'other',
+  'others',
+  'uncategorized',
+  'uncategorised',
+  'no category',
+  'n/a',
+  'na',
+  'none',
+  '-',
+  '—',
+]);
+
+/**
+ * A display label for a playlist group, or null when there is nothing to show.
+ *
+ * This is display-only on purpose: the filter still matches on the raw value, so two feeds
+ * that disagree about `Undefined` versus `unknown` stay separate categories underneath while
+ * the viewer sees one honest word for both.
+ */
+export const categoryLabel = (raw: string | null | undefined): string | null => {
+  const text = (raw ?? '').trim().replace(/\s+/g, ' ');
+  if (!text) return null;
+  return UNCATEGORISED_TOKENS.has(text.toLowerCase()) ? 'Uncategorised' : text;
+};
+
+/**
  * What sits under the channel name. EPG first, then the channel's own first
  * category, so a row without listings still carries real information instead of
  * collapsing to one line and breaking the vertical rhythm. O(1) on every path.
@@ -187,7 +224,7 @@ export const getRowSecondary = (channel: LiveChannelView): RowSecondary | null =
   if (now) return { line: `Now · ${now}`, tone: 'now' };
   const next = channel.nextUp?.trim();
   if (next) return { line: `Next · ${next}`, tone: 'next' };
-  const category = channel.categories[0]?.trim();
+  const category = categoryLabel(channel.categories[0]);
   if (category) return { line: category, tone: 'meta' };
   return null;
 };

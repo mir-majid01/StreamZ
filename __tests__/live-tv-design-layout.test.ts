@@ -19,6 +19,7 @@ import {
   MODE_OPTIONS,
   SCOPE_OPTIONS,
   CHIP_RAIL_HEIGHT,
+  categoryLabel,
   clipQuery,
   createLogoHostBudget,
   EMPTY_ACTION_LABELS,
@@ -455,5 +456,54 @@ describe('the two nav groups really are one family', () => {
     for (const option of [...MODE_OPTIONS, ...SCOPE_OPTIONS]) {
       expect(option.label.length).toBeLessThanOrEqual(9);
     }
+  });
+});
+
+describe('category labels a viewer can read', () => {
+  const channel = (categories: string[]): LiveChannelView => ({
+    id: 'c1',
+    name: 'Test Channel',
+    categories,
+  });
+
+  it.each(['Undefined', 'undefined', ' unknown ', 'Other', 'n/a', '-', 'Uncategorized'])(
+    'turns %j into one honest word',
+    (raw) => {
+      expect(categoryLabel(raw)).toBe('Uncategorised');
+    },
+  );
+
+  it('leaves a real group alone, including its case', () => {
+    expect(categoryLabel('Movies')).toBe('Movies');
+    // Acronyms must not be title-cased into nonsense by a clever formatter.
+    expect(categoryLabel('BBC')).toBe('BBC');
+    expect(categoryLabel('General')).toBe('General');
+  });
+
+  it('says nothing rather than showing an empty chip', () => {
+    expect(categoryLabel('')).toBeNull();
+    expect(categoryLabel('   ')).toBeNull();
+    expect(categoryLabel(null)).toBeNull();
+    expect(categoryLabel(undefined)).toBeNull();
+  });
+
+  it('collapses the ragged whitespace playlists carry', () => {
+    expect(categoryLabel('Kids   Toys')).toBe('Kids Toys');
+  });
+
+  it('uses the same word in a row as in the rail', () => {
+    expect(getRowSecondary(channel(['Undefined']))).toEqual({
+      line: 'Uncategorised',
+      tone: 'meta',
+    });
+  });
+
+  it('still prefers what is on air over the category', () => {
+    expect(getRowSecondary({ ...channel(['Movies']), nowPlaying: 'News at Ten' })?.line).toBe(
+      'Now · News at Ten',
+    );
+    // A channel whose only group is junk shows no secondary line at all, not "Undefined".
+    expect(getRowSecondary(channel(['undefined']))?.tone).toBe('meta');
+    expect(getRowSecondary(channel([]))).toBeNull();
   });
 });

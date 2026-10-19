@@ -45,6 +45,7 @@ import {
   MODE_OPTIONS,
   SCOPE_OPTIONS,
   flattenScheduleRows,
+  categoryLabel,
   getCatalogueSummary,
   getMatchSummary,
   resolveEmptyState,
@@ -228,7 +229,9 @@ export const LiveTvScreen = () => {
   const categoryItems = useMemo<RailItem[]>(
     () => [
       { key: '*', label: 'All categories' },
-      ...categories.map((name) => ({ key: name, label: name })),
+      // The key stays the playlist's own value so the filter still matches the rows; only the
+      // word the viewer reads is normalised.
+      ...categories.map((name) => ({ key: name, label: categoryLabel(name) ?? name })),
     ],
     [categories],
   );
