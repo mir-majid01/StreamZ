@@ -4,9 +4,7 @@ import { UpdateModal } from '@/src/components/UpdateModal';
 import { updateService, type UpdateInfo } from '@/src/services/UpdateService';
 import {
   clearSkippedVersion,
-  isSkippedVersion,
   saveLastUpdateCheck,
-  setSkippedVersion,
   shouldCheckForUpdates,
 } from '@/src/utils/updateCheckStorage';
 
@@ -34,10 +32,8 @@ export const UpdateChecker = ({
 
       if (!info.hasUpdate) return;
 
-      if (!force && (await isSkippedVersion(info.latestVersion))) return;
-
-      // If the user previously skipped an older version, forget it — a
-      // newer one is out.
+      // A version skipped by an older build must not keep hiding an update: the dialog can no
+      // longer be dismissed, so anything still recorded would silently strand this device.
       await clearSkippedVersion();
 
       setUpdateInfo(info);
@@ -59,13 +55,6 @@ export const UpdateChecker = ({
     return () => sub.remove();
   }, [checkOnForeground, runCheck]);
 
-  const handleSkipVersion = useCallback(async () => {
-    if (updateInfo?.latestVersion) {
-      await setSkippedVersion(updateInfo.latestVersion);
-    }
-    setVisible(false);
-  }, [updateInfo]);
-
   if (!visible) return null;
 
   return (
@@ -73,7 +62,6 @@ export const UpdateChecker = ({
       visible={visible}
       onClose={() => setVisible(false)}
       initialUpdateInfo={updateInfo}
-      onSkipVersion={handleSkipVersion}
     />
   );
 };

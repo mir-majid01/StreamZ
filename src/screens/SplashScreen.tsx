@@ -37,9 +37,7 @@ import {
 } from '@/src/utils/releasePolicy';
 import {
   clearSkippedVersion,
-  isSkippedVersion,
   saveLastUpdateCheck,
-  setSkippedVersion,
 } from '@/src/utils/updateCheckStorage';
 
 /**
@@ -170,15 +168,6 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
     BackHandler.exitApp();
   }, []);
 
-  const handleSkipVersion = useCallback(async () => {
-    if (updateInfo?.latestVersion) {
-      await setSkippedVersion(updateInfo.latestVersion);
-    }
-    setUpdaterOpen(false);
-    void saveLastUpdateCheck();
-    void finishBoot();
-  }, [updateInfo, finishBoot]);
-
   /**
    * A bound, not a schedule. The ident's own animation callback is what marks the draw done;
    * this exists only for the case where that callback never arrives (a surface that got no
@@ -229,22 +218,16 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         decision.policy
       ) {
         const policy = decision.policy;
-        // Only an optional update may be skipped, and a skip recorded for
-        // another verdict cannot carry over into a mandatory one.
-        const skippable = !decision.blocks;
-        const skipped = skippable
-          ? await isSkippedVersion(policy.latestVersion)
-          : false;
+        // Nothing here is skippable any more, so a skip recorded by an older build has to be
+        // erased rather than honoured — otherwise a device that once dismissed a release would
+        // never be shown the one that replaced it.
+        await clearSkippedVersion();
         if (cancelled) return;
-        if (!skipped) {
-          if (skippable) await clearSkippedVersion();
-          if (cancelled) return;
-          setUpdateInfo(infoFromPolicy(policy, decision.verdict));
-          setUpdatePolicy(policy);
-          setUpdateMandatory(decision.blocks);
-          setUpdaterOpen(true);
-          return;
-        }
+        setUpdateInfo(infoFromPolicy(policy, decision.verdict));
+        setUpdatePolicy(policy);
+        setUpdateMandatory(decision.blocks);
+        setUpdaterOpen(true);
+        return;
       }
 
       await saveLastUpdateCheck();
@@ -308,9 +291,7 @@ export const SplashScreen = ({ navigation }: RootStackScreenProps<'Splash'>) => 
         visible={updaterOpen}
         onClose={handleCloseUpdater}
         initialUpdateInfo={updateInfo}
-        onSkipVersion={updateMandatory ? undefined : handleSkipVersion}
         policy={updatePolicy}
-        mandatory={updateMandatory}
         onExit={handleExitApp}
       />
     </Box>

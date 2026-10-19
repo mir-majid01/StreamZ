@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Modal, Platform, ScrollView } from 'react-native';
+import { Animated, BackHandler, Easing, Modal, Platform, ScrollView } from 'react-native';
 import { X } from 'lucide-react-native';
 import type { File } from 'expo-file-system';
 import { Box } from '@/components/ui/box';
@@ -9,9 +9,9 @@ import { Heading } from '@/components/ui/heading';
 import { Text } from '@/components/ui/text';
 import { Icon } from '@/components/ui/icon';
 import { Spinner } from '@/components/ui/spinner';
-import { Pressable } from '@/components/ui/pressable';
 import { ChangelogSection } from '@/src/components/ChangelogMarkdown';
 import { Focusable } from '@/src/components/Focusable';
+import { StreamZLogo } from '@/src/components/streamz';
 import {
   updateService,
   type UpdateInfo,
@@ -29,17 +29,16 @@ interface UpdateModalProps {
   onClose: () => void;
   /** Pre-fetched update info (from the background checker). */
   initialUpdateInfo?: UpdateInfo | null;
-  /** Optional "Skip this version" callback. */
-  onSkipVersion?: () => void;
   /**
-   * The published release policy whose digest, package name and signing
-   * certificate the downloaded file is checked against. Without it there is
-   * nothing to verify against, so the in-app install is not offered.
+   * The published release policy whose digest, package name and signing certificate the
+   * downloaded file is checked against. Without it there is nothing to verify against, so
+   * the in-app install is not offered.
    */
   policy?: ReleasePolicy | null;
-  /** Mandatory updates cannot be dismissed, skipped, or backed out of. */
-  mandatory?: boolean;
-  /** Used by the Exit action on a mandatory update. */
+  /**
+   * Leaving the app, which is the only alternative to updating. Defaults to a real exit so the
+   * button can never be a dead control at a call site that forgot to wire one.
+   */
   onExit?: () => void;
 }
 
@@ -71,14 +70,30 @@ const REFUSAL_COPY: Record<IntegrityReason, string> = {
     'The downloaded file is a different size than the published release.',
 };
 
+/**
+ * Every state in which an update is actually on offer. The owner's rule is that a viewer
+ * updates or leaves — there is no dismiss, no skip, and no hardware-back escape while one of
+ * these is showing. `checking`, `up-to-date` and `error` stay dismissible, because in those
+ * there is nothing being asked of anybody.
+ */
+const BLOCKING_STATES: readonly UpdateState[] = [
+  'available',
+  'downloading',
+  'verifying',
+  'needsPermission',
+  'refused',
+  'installing',
+  'downloaded',
+];
+
 export const UpdateModal = ({
   visible,
   onClose,
   initialUpdateInfo,
-  onSkipVersion,
   policy = null,
-  mandatory = false,
-  onExit,
+  onExit = () => {
+    BackHandler.exitApp();
+  },
 }: UpdateModalProps) => {
   const [state, setState] = useState<UpdateState>('checking');
   const [info, setInfo] = useState<UpdateInfo | null>(null);
@@ -251,36 +266,99 @@ export const UpdateModal = ({
     Boolean(info?.downloadUrl) &&
     Boolean(policy);
 
+  const blocked = BLOCKING_STATES.includes(state);
+
+  // The sheet rises once per appearance rather than on every state change, so a
+  // progress tick cannot re-trigger the entrance.
+  const rise = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!visible) {
+      rise.setValue(0);
+      return;
+    }
+    Animated.timing(rise, {
+      toValue: 1,
+      duration: 320,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+  }, [visible, rise]);
+
   return (
     <Modal
       visible={visible}
       transparent
       animationType="fade"
-      // A mandatory gate has no dismissal gesture: hardware back stays with the
-      // screen so the only ways out are updating or exiting.
+      // Hardware back is swallowed while an update is on offer: the two ways out of
+      // this screen are updating and quitting, and a back press is neither.
       onRequestClose={() => {
-        if (!mandatory) onClose();
+        if (!blocked) onClose();
       }}
     >
       <Box className="flex-1 bg-background/90">
         <Box className="flex-1 items-center justify-center px-6">
-          <Box className="h-[90vh] w-full max-w-md overflow-hidden rounded-2xl bg-card p-6">
-            <HStack className="mb-4 items-center justify-between">
-              <Heading size="lg" bold className="text-foreground">
-                {mandatory ? 'Update required' : 'App Update'}
-              </Heading>
-              {!mandatory && (
-                <Focusable
-                  onPress={onClose}
-                  className="rounded-full bg-background/40 p-2"
-                  focusedClassName={`bg-primary ${TV_FOCUS_BORDER_CLASSNAME}`}
-                >
-                  <Icon as={X} size="lg" className="text-foreground" />
-                </Focusable>
-              )}
-            </HStack>
+          <Animated.View
+            style={{
+              opacity: rise,
+              transform: [
+                {
+                  translateY: rise.interpolate({ inputRange: [0, 1], outputRange: [28, 0] }),
+                },
+              ],
+              width: '100%',
+              maxWidth: 440,
+            }}
+          >
+            <Box className="max-h-[88vh] overflow-hidden rounded-3xl border border-border/60 bg-card">
+              <Box className="px-6 pb-5 pt-6">
+                <HStack className="items-center justify-between">
+                  <HStack space="xs" className="items-center">
+                    <StreamZLogo size={15} />
+                    <Box className="h-4 w-px bg-border" />
+                    <Text size="xs" className="text-muted-foreground">
+                      Updater
+                    </Text>
+                  </HStack>
+                  {!blocked && (
+                    <Focusable
+                      onPress={onClose}
+                      accessibilityLabel="Close"
+                      className="rounded-full bg-background/60 p-2"
+                      focusedClassName={`bg-primary ${TV_FOCUS_BORDER_CLASSNAME}`}
+                    >
+                      <Icon as={X} size="md" className="text-foreground" />
+                    </Focusable>
+                  )}
+                </HStack>
 
-            <ScrollView className="flex-1" showsVerticalScrollIndicator={false}>
+                <Heading size="2xl" bold className="mt-5 text-foreground">
+                  {state === 'up-to-date'
+                    ? 'You’re up to date'
+                    : state === 'error'
+                      ? 'Something went wrong'
+                      : 'A new version is ready'}
+                </Heading>
+
+                {blocked && info && (
+                  <HStack space="sm" className="mt-4 items-center">
+                    <Box className="rounded-full bg-background/70 px-3 py-1.5">
+                      <Text size="xs" className="text-muted-foreground">
+                        {info.currentVersion}
+                      </Text>
+                    </Box>
+                    <Text size="sm" className="text-muted-foreground">
+                      →
+                    </Text>
+                    <Box className="rounded-full bg-primary px-3 py-1.5">
+                      <Text size="xs" bold className="text-primary-foreground">
+                        {info.latestVersion}
+                      </Text>
+                    </Box>
+                  </HStack>
+                )}
+              </Box>
+
+              <ScrollView className="flex-1 px-6" showsVerticalScrollIndicator={false}>
               {state === 'checking' && (
                 <VStack space="md" className="items-center py-8">
                   <Spinner size="large" color="#E50914" />
@@ -294,27 +372,13 @@ export const UpdateModal = ({
               )}
 
               {state === 'up-to-date' && (
-                <VStack space="md">
-                  <VStack space="sm" className="items-center py-4">
-                    <Text size="3xl" className="text-primary">
-                      ✓
-                    </Text>
-                    <Heading size="md" className="text-foreground">
-                      You&apos;re up to date
-                    </Heading>
-                    <Text
-                      size="sm"
-                      className="text-center text-muted-foreground"
-                    >
-                      Version {info?.currentVersion ?? info?.latestVersion} is
-                      the latest.
-                    </Text>
-                    {!!info?.releaseDate && (
-                      <Text size="xs" className="text-muted-foreground">
-                        Released: {updateService.formatDate(info.releaseDate)}
-                      </Text>
-                    )}
-                  </VStack>
+                <VStack space="md" className="pb-6">
+                  <Text size="sm" className="text-muted-foreground">
+                    Version {info?.currentVersion ?? info?.latestVersion} is the
+                    latest.{' '}
+                    {!!info?.releaseDate &&
+                      `Released ${updateService.formatDate(info.releaseDate)}.`}
+                  </Text>
                   <ChangelogSection
                     title="Changelog"
                     notes={info?.releaseNotes || 'No release notes available.'}
@@ -392,20 +456,15 @@ export const UpdateModal = ({
               )}
 
               {state === 'error' && (
-                <VStack space="md" className="items-center py-8">
-                  <Text size="3xl" className="text-primary">
-                    !
-                  </Text>
-                  <Heading size="md" className="text-foreground">
-                    Something went wrong
-                  </Heading>
-                  <Text size="sm" className="text-center text-muted-foreground">
+                <VStack space="md" className="pb-6">
+                  <Text size="sm" className="text-muted-foreground">
                     {errorMessage || 'Please try again in a moment.'}
                   </Text>
                 </VStack>
               )}
             </ScrollView>
 
+            <Box className="px-6 pb-6">
             {state === 'up-to-date' && (
               <Focusable
                 onPress={runCheck}
@@ -457,25 +516,13 @@ export const UpdateModal = ({
                     </Focusable>
                   )
                 )}
-                {mandatory ? (
-                  <Focusable
-                    onPress={() => onExit?.()}
-                    className="items-center rounded-md border border-border px-4 py-3"
-                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                  >
-                    <Text className="text-foreground">Exit</Text>
-                  </Focusable>
-                ) : (
-                  onSkipVersion && (
-                    <Pressable onPress={onSkipVersion}>
-                      <Box className="items-center py-2">
-                        <Text size="sm" className="text-muted-foreground">
-                          Skip this version
-                        </Text>
-                      </Box>
-                    </Pressable>
-                  )
-                )}
+                <Focusable
+                  onPress={() => onExit?.()}
+                  className="items-center rounded-md border border-border px-4 py-3"
+                  focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                >
+                  <Text className="text-foreground">Exit app</Text>
+                </Focusable>
               </VStack>
             )}
 
@@ -498,24 +545,13 @@ export const UpdateModal = ({
                 >
                   <Text className="text-foreground">I&apos;ve allowed it — try again</Text>
                 </Focusable>
-                {!mandatory && (
-                  <Focusable
-                    onPress={onClose}
-                    className="items-center rounded-md border border-border px-4 py-3"
-                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                  >
-                    <Text className="text-foreground">Later</Text>
-                  </Focusable>
-                )}
-                {mandatory && (
-                  <Focusable
-                    onPress={() => onExit?.()}
-                    className="items-center rounded-md border border-border px-4 py-3"
-                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                  >
-                    <Text className="text-foreground">Exit</Text>
-                  </Focusable>
-                )}
+                <Focusable
+                  onPress={() => onExit?.()}
+                  className="items-center rounded-md border border-border px-4 py-3"
+                  focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                >
+                  <Text className="text-foreground">Exit app</Text>
+                </Focusable>
               </VStack>
             )}
 
@@ -531,23 +567,13 @@ export const UpdateModal = ({
                     Download again
                   </Text>
                 </Focusable>
-                {mandatory ? (
-                  <Focusable
-                    onPress={() => onExit?.()}
-                    className="items-center rounded-md border border-border px-4 py-3"
-                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                  >
-                    <Text className="text-foreground">Exit</Text>
-                  </Focusable>
-                ) : (
-                  <Focusable
-                    onPress={onClose}
-                    className="items-center rounded-md border border-border px-4 py-3"
-                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                  >
-                    <Text className="text-foreground">Later</Text>
-                  </Focusable>
-                )}
+                <Focusable
+                  onPress={() => onExit?.()}
+                  className="items-center rounded-md border border-border px-4 py-3"
+                  focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                >
+                  <Text className="text-foreground">Exit app</Text>
+                </Focusable>
               </VStack>
             )}
 
@@ -628,18 +654,18 @@ export const UpdateModal = ({
                     </Text>
                   </Focusable>
                 )}
-                {mandatory && (
-                  <Focusable
-                    onPress={() => onExit?.()}
-                    className="items-center rounded-md border border-border px-4 py-3"
-                    focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
-                  >
-                    <Text className="text-foreground">Exit</Text>
-                  </Focusable>
-                )}
+                <Focusable
+                  onPress={() => onExit?.()}
+                  className="items-center rounded-md border border-border px-4 py-3"
+                  focusedClassName={`bg-primary/10 ${TV_FOCUS_BORDER_CLASSNAME}`}
+                >
+                  <Text className="text-foreground">Exit app</Text>
+                </Focusable>
               </VStack>
             )}
+            </Box>
           </Box>
+          </Animated.View>
         </Box>
       </Box>
     </Modal>
