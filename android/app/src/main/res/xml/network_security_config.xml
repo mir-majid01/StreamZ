@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Live TV playlists and segments are frequently served over plain http:// by small
+  broadcasters, and the release build inherited no cleartext permission at all: the
+  debug and debugOptimized manifests each set usesCleartextTraffic="true", so every
+  http:// channel played in development and silently failed in release with
+  UnknownServiceException. The base rule therefore permits cleartext, and the hosts
+  that carry an account, a key or a download are explicitly refused below — a login
+  token or an APK must never be able to travel unencrypted by accident.
+-->
+<network-security-config>
+  <base-config cleartextTrafficPermitted="true" />
+
+  <!-- Firebase, Google sign-in, Analytics, and Cloud Storage. -->
+  <domain-config cleartextTrafficPermitted="false">
+    <domain includeSubdomains="true">googleapis.com</domain>
+    <domain includeSubdomains="true">google.com</domain>
+    <domain includeSubdomains="true">firebaseio.com</domain>
+    <domain includeSubdomains="true">firebasestorage.app</domain>
+    <domain includeSubdomains="true">measurement.goog</domain>
+  </domain-config>
+
+  <!-- The content engine and the subtitle provider both take a key in the request. -->
+  <domain-config cleartextTrafficPermitted="false">
+    <domain includeSubdomains="true">themoviedb.org</domain>
+    <domain includeSubdomains="true">tmdb.org</domain>
+    <domain includeSubdomains="true">wyzie.io</domain>
+  </domain-config>
+
+  <!-- Release discovery and the APK download: a plain-HTTP APK is a swap-in attack. -->
+  <domain-config cleartextTrafficPermitted="false">
+    <domain includeSubdomains="true">github.com</domain>
+    <domain includeSubdomains="true">githubusercontent.com</domain>
+  </domain-config>
+</network-security-config>

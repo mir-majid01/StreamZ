@@ -295,6 +295,8 @@ const sentence = (
     probeSucceeded: boolean;
     /** Set when the refusal the probe found was below the published address. */
     refusedResource?: StreamResourceKind | null;
+    /** Set when the device's own network policy, not the broadcaster, refused the request. */
+    cleartextBlocked?: boolean;
   },
 ): string => {
   const who = parts.host ?? 'This channel';
@@ -360,7 +362,7 @@ const sentence = (
     case 'stream-expired':
       return `This live feed moved past the player's buffer. Rejoining at the live edge normally fixes it.`;
     case 'access-rejected':
-      if (parts.media3Name === 'ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED') {
+      if (parts.cleartextBlocked || parts.media3Name === 'ERROR_CODE_IO_CLEARTEXT_NOT_PERMITTED') {
         return `${who} only serves plain HTTP, and this device will not play an unsecured stream.`;
       }
       if (refused) {
@@ -408,6 +410,13 @@ export const classifyPlaybackFailure = (
   let category: PlaybackFailureCategory | null = media3Name
     ? CATEGORY_BY_CODE_NAME[media3Name] ?? null
     : null;
+
+  // Android refuses a plain-HTTP stream before the request ever leaves the device, and media3
+  // reports that as ERROR_CODE_IO_NETWORK_CONNECTION_FAILED — the very code a dead origin produces.
+  // Without the native text the two are indistinguishable, and the app tells a viewer that their
+  // broadcaster is offline when it was the phone that said no.
+  const cleartextBlocked = /CLEARTEXT communication\b/i.test(diagnostics.nativeException ?? '');
+  if (cleartextBlocked) category = 'access-rejected';
 
   // Two codes need more than their own name to be honest about.
   if (media3Name === 'ERROR_CODE_IO_UNSPECIFIED') {
@@ -496,6 +505,7 @@ export const classifyPlaybackFailure = (
       media3Name,
       probeSucceeded,
       refusedResource,
+      cleartextBlocked,
     }),
     transient: TRANSIENT_CATEGORIES.has(category),
     codeName: media3Name,
