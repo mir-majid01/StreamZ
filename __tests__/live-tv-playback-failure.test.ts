@@ -475,3 +475,33 @@ describe('the retry wording and schedule the screen shows', () => {
     expect(automaticRetryDelayMs(99)).toBe(automaticRetryDelayMs(2));
   });
 });
+
+describe('a 200 that is a web page is never reported as an unsupported format', () => {
+  // The player names a parse failure; the probe proves the body was HTML. The bytes win.
+  const parseFailure = exo('ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED', 3003);
+
+  it('names the dead catalogue entry when the probe returned HTML', () => {
+    const failure = classifyPlaybackFailure({
+      payload: parseFailure,
+      url: 'http://103.151.60.162:2122/play/a020/index.m3u8?hls',
+      probe: probeOf({
+        observation: 'answered',
+        status: 200,
+        contentType: 'text/html',
+        bodyPreview: '<html><head><title>404 Not Found</title></head></html>',
+        resourceKind: 'other',
+      }),
+    });
+    expect(failure.category).toBe('invalid-manifest');
+    expect(failure.message).toContain('sent a web page');
+  });
+
+  it('keeps the format bucket when nothing proved what the bytes were', () => {
+    const failure = classifyPlaybackFailure({
+      payload: parseFailure,
+      url: 'http://103.151.60.162:2122/play/a020/index.m3u8?hls',
+      probe: probeOf({ observation: 'answered', status: 200 }),
+    });
+    expect(failure.category).toBe('unsupported-format');
+  });
+});

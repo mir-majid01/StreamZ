@@ -35,6 +35,13 @@ import {
   type PlaybackFailure,
 } from '@/src/services/liveTv/playbackFailure';
 import { probeStreamChain, type StreamProbeChain, type StreamProbeResult } from '@/src/services/liveTv/streamProbe';
+import {
+  EMPTY_LIVE_TELEMETRY,
+  LIVE_BUFFER_CONFIG,
+  LIVE_FORWARD_BUFFER_SECONDS,
+  formatLiveTelemetry,
+  type LivePlaybackTelemetry,
+} from '@/src/services/liveTv/livePlaybackTuning';
 import { FONT } from '@/src/theme/tokens';
 import { isTV } from '@/src/utils/tv';
 import type { RootStackScreenProps } from '@/src/navigation/types';
@@ -78,6 +85,17 @@ export const LivePlayerScreen = ({
   /** Redacted transport/native evidence retained for the final error report. */
   const [playbackDiagnostics, setPlaybackDiagnostics] = useState<PlaybackFailure | null>(null);
   /**
+   * What this tune actually did, in numbers. Kept off the success path's UI and shown only
+   * with a failure, because a working channel does not need a HUD — but a failed one should
+   * say whether it ever produced a frame and how many times it stalled, instead of leaving
+   * the report at "it broke".
+   */
+  const [telemetry, setTelemetry] = useState<LivePlaybackTelemetry>(EMPTY_LIVE_TELEMETRY);
+  /** `Date.now()` when the player was asked for this source; null before it was asked. */
+  const loadStartedAtRef = useRef<number | null>(null);
+  /** When the current stall began, or null when the player is not buffering. */
+  const bufferingSinceRef = useRef<number | null>(null);
+  /**
    * Automatic retries the screen had already spent when it gave up, or null when nothing failed.
    * Kept so the error state can say it tried twice on its own instead of looking like a first
    * attempt — the classification itself is already in `error` and `playerDetail`.
@@ -120,6 +138,8 @@ export const LivePlayerScreen = ({
   const overlayOpen = channelsOpen;
   const { visible, show, toggle } = useControlsVisibility(!paused, overlayOpen);
   const diagnosticSummary = playbackDiagnosticSummary(playbackDiagnostics);
+  // Measured, not inferred: a tune that never produced a frame says so by saying nothing.
+  const telemetryLine = formatLiveTelemetry(telemetry);
 
   // The window itself (landscape, hidden system bars, and giving both back on the way out) is
   // owned by the shared hook, because the same chrome is what made the tab bar jump after a movie
@@ -186,10 +206,16 @@ export const LivePlayerScreen = ({
       const controller = new AbortController();
       probeRef.current = controller;
       try {
-        return await probeStreamChain(url, {
+        const chain = await probeStreamChain(url, {
           headers: target.headers,
           signal: controller.signal,
         });
+        // The probe's own round-trip is the only playlist latency number this app can
+        // measure: media3 reports load failures, not per-request timing.
+        if (chain) {
+          setTelemetry((t) => ({ ...t, playlistLatencyMs: chain.top.ms }));
+        }
+        return chain;
       } catch {
         return null;
       } finally {
@@ -212,6 +238,9 @@ export const LivePlayerScreen = ({
     cancelProbe();
     autoRetriesRef.current = 0;
     playbackStartedRef.current = false;
+    loadStartedAtRef.current = null;
+    bufferingSinceRef.current = null;
+    setTelemetry(EMPTY_LIVE_TELEMETRY);
     setChain(null);
     setRetriesSpent(null);
     setRetryNotice(null);
@@ -400,6 +429,53 @@ export const LivePlayerScreen = ({
     onDown: overlayOpen ? undefined : show,
   });
 
+  /**
+   * The clock starts when the player is asked for a source, not when the screen was drawn:
+   * a tune waits on the resolver first, and folding that wait into "time to first frame"
+   * would blame the player for the service.
+   */
+  const handleLoadStart = useCallback(() => {
+    loadStartedAtRef.current = Date.now();
+    bufferingSinceRef.current = null;
+    setTelemetry((t) =>
+      t.firstFrameMs === null && t.rebufferCount === 0 && t.rebufferTotalMs === 0
+        ? t
+        : { ...EMPTY_LIVE_TELEMETRY, playlistLatencyMs: t.playlistLatencyMs },
+    );
+  }, []);
+
+  const handleFirstFrame = useCallback(() => {
+    const started = loadStartedAtRef.current;
+    if (started === null) return;
+    setTelemetry((t) =>
+      t.firstFrameMs === null ? { ...t, firstFrameMs: Date.now() - started } : t,
+    );
+  }, []);
+
+  /**
+   * A buffer event before the first frame is the tune still filling, not a rebuffer. Only
+   * stalls after a frame has been shown are counted — that is the number a viewer would
+   * recognise as "it froze".
+   */
+  const handleBuffer = useCallback(({ isBuffering }: { isBuffering: boolean }) => {
+    if (isBuffering) {
+      if (bufferingSinceRef.current !== null) return;
+      bufferingSinceRef.current = Date.now();
+      setTelemetry((t) =>
+        t.firstFrameMs === null ? t : { ...t, rebufferCount: t.rebufferCount + 1 },
+      );
+      return;
+    }
+    const since = bufferingSinceRef.current;
+    bufferingSinceRef.current = null;
+    if (since === null) return;
+    setTelemetry((t) =>
+      t.firstFrameMs === null
+        ? t
+        : { ...t, rebufferTotalMs: t.rebufferTotalMs + (Date.now() - since) },
+    );
+  }, []);
+
   const openChannels = useCallback(() => setChannelsOpen(true), []);
   const handleBack = useCallback(() => navigation.goBack(), [navigation]);
 
@@ -435,6 +511,15 @@ export const LivePlayerScreen = ({
             setPlayerDetail(null);
             setPlaybackDiagnostics(null);
           }}
+          // Live numbers, not the VOD ones: a bounded offset behind the edge and a small
+          // catch-up window, instead of media3's unconfigured defaults. See the rationale
+          // in `livePlaybackTuning`.
+          bufferConfig={LIVE_BUFFER_CONFIG}
+          // iOS has no bufferConfig; AVPlayer takes the forward-buffer duration in seconds.
+          preferredForwardBufferDuration={LIVE_FORWARD_BUFFER_SECONDS}
+          onLoadStart={handleLoadStart}
+          onReadyForDisplay={handleFirstFrame}
+          onBuffer={handleBuffer}
           onError={handlePlaybackError}
         />
       ) : null}
@@ -500,6 +585,16 @@ export const LivePlayerScreen = ({
               style={{ fontFamily: FONT.mono }}
             >
               {playerDetail}
+            </Text>
+          ) : null}
+          {telemetryLine ? (
+            // What this tune actually did before it failed — the numbers a report needs.
+            <Text
+              size="xs"
+              className="mt-2 text-center text-muted-foreground"
+              style={{ fontFamily: FONT.mono }}
+            >
+              {telemetryLine}
             </Text>
           ) : null}
           {diagnosticSummary ? (

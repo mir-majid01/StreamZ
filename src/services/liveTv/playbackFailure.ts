@@ -474,6 +474,29 @@ export const classifyPlaybackFailure = (
     // and no probe is needed to say so.
     category = decidingStatus === null ? 'stream-gone' : categoryFromHttpStatus(decidingStatus);
   }
+  // A 200 whose body is a web page is a dead catalogue entry, whatever name media3 gave the
+  // parse failure. The player says "cannot parse" — which reads as "this device cannot play
+  // the format" — while the bytes say "this is HTML". The bytes are the stronger evidence, and
+  // this is the shape of the old "HTTP 200 reported as unsupported" complaint.
+  //
+  // `resourceKind === 'other'` alone is not that evidence: it is also what the classifier
+  // returns when it learned nothing. The header or the body has to actually say HTML.
+  const probeSawHtml =
+    probeSucceeded &&
+    !refusedBelowListing &&
+    resourceKind === 'other' &&
+    (/text\/html/i.test(probe?.contentType ?? '') ||
+      /<\s*(?:!doctype|html|body)\b/i.test(probe?.bodyPreview ?? ''));
+  if (
+    probeSawHtml &&
+    (media3Name === 'ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED' ||
+      media3Name === 'ERROR_CODE_PARSING_MANIFEST_UNSUPPORTED' ||
+      media3Name === 'ERROR_CODE_PARSING_CONTAINER_MALFORMED' ||
+      media3Name === 'ERROR_CODE_PARSING_MANIFEST_MALFORMED' ||
+      media3Name === 'ERROR_CODE_IO_INVALID_HTTP_CONTENT_TYPE')
+  ) {
+    category = 'invalid-manifest';
+  }
 
   if (category === null) {
     // No usable player code. The probe alone can still carry a diagnosis, because it observed the
