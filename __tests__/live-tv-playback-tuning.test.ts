@@ -14,6 +14,9 @@ import {
   LIVE_FORWARD_BUFFER_SECONDS,
   formatLiveTelemetry,
   liveSilentStreamNotice,
+  audioFormatsOf,
+  anyAudioTrackSelected,
+  undecodableAudioFormat,
 } from '@/src/services/liveTv/livePlaybackTuning';
 
 const ROOT = path.resolve(__dirname, '..');
@@ -76,6 +79,8 @@ describe('play telemetry says only what it measured', () => {
         rebufferTotalMs: 4300,
         playlistLatencyMs: 412,
         audioTrackCount: null,
+        audioFormats: [],
+        audioSelected: null,
       }),
     ).toBe('first frame 900 ms · playlist 412 ms · 2 rebuffers (4300 ms)');
   });
@@ -153,13 +158,12 @@ describe('a silent live stream says so while it is playing', () => {
     expect(liveSilentStreamNotice({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 2 })).toBeNull();
   });
 
-  it('names what the player saw, without picking between the two causes', () => {
+  it('says the feed carries no audio when the count is zero', () => {
     const notice = liveSilentStreamNotice({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 0 });
     expect(notice).toContain('No sound');
-    expect(notice).toContain('no playable audio track');
-    // The feed may carry none, or the phone may not decode the one it carries. From here those
-    // two are indistinguishable, so the sentence claims only the observation.
-    expect(notice).not.toMatch(/this channel has no audio|broken channel/i);
+    expect(notice).toContain('not sending any audio');
+    // Zero tracks is the player's own report; nothing here may blame the phone for it.
+    expect(notice).not.toMatch(/phone|decoder|decode/i);
   });
 
   it('is rendered over playback rather than only on the failure panel', () => {
@@ -173,5 +177,68 @@ describe('a silent live stream says so while it is playing', () => {
     // Touch-through: the picture is playing and the bar must not eat a press meant for the controls.
     expect(block).toContain('pointerEvents="none"');
     expect(block).toContain('{silentNotice}');
+  });
+});
+
+describe('the player reports the audio format, not just that something is wrong', () => {
+  const track = (type: string, selected = false) => ({ type, selected });
+
+  it('reads the MIME strings react-native-video fills from Format.sampleMimeType', () => {
+    expect(audioFormatsOf([track('audio/mp4a-latm'), track('audio/ac-3', true)])).toEqual([
+      'audio/mp4a-latm',
+      'audio/ac-3',
+    ]);
+    // A video track is not audio evidence.
+    expect(audioFormatsOf([{ type: 'video/avc' }])).toEqual([]);
+    expect(audioFormatsOf([{ type: undefined }])).toEqual([]);
+    expect(audioFormatsOf([])).toEqual([]);
+  });
+
+  it('names the formats a phone is not guaranteed to decode', () => {
+    expect(undecodableAudioFormat(['audio/ac-3'])).toBe('Dolby Digital');
+    // `audio/eac-3` also contains `ac-3`; reading it as Dolby Digital would misinform the user.
+    expect(undecodableAudioFormat(['audio/eac-3'])).toBe('Dolby Digital Plus');
+    expect(undecodableAudioFormat(['audio/mp2'])).toBe('MPEG Layer II');
+    expect(undecodableAudioFormat(['audio/dts-hd'])).toBe('DTS-HD');
+    expect(undecodableAudioFormat(['audio/mp4a-latm'])).toBeNull();
+    expect(undecodableAudioFormat([])).toBeNull();
+  });
+
+  it('says the specific thing when the sound is missing, and nothing when it cannot tell', () => {
+    const base = { ...EMPTY_LIVE_TELEMETRY };
+    expect(liveSilentStreamNotice(base)).toBeNull();
+    expect(liveSilentStreamNotice({ ...base, audioTrackCount: 0 })).toContain(
+      'not sending any audio',
+    );
+    expect(
+      liveSilentStreamNotice({ ...base, audioTrackCount: 1, audioFormats: ['audio/ac-3'] }),
+    ).toContain('Dolby Digital');
+    // AAC present and playing: silence is not something this notice can explain, so it stays quiet
+    // rather than guessing at the phone's volume or audio focus.
+    expect(
+      liveSilentStreamNotice({ ...base, audioTrackCount: 1, audioFormats: ['audio/mp4a-latm'] }),
+    ).toBeNull();
+  });
+
+  it('keeps the selection flag so a wrong-track tune can be told from a dead feed', () => {
+    expect(anyAudioTrackSelected([])).toBeNull();
+    expect(anyAudioTrackSelected([track('audio/ac-3', true)])).toBe(true);
+    expect(anyAudioTrackSelected([track('audio/ac-3')])).toBe(false);
+  });
+
+  it('prints the formats on the failure line', () => {
+    const line = formatLiveTelemetry({
+      ...EMPTY_LIVE_TELEMETRY,
+      audioTrackCount: 2,
+      audioFormats: ['audio/mp4a-latm', 'audio/ac-3'],
+    });
+    expect(line).toContain('2 audio tracks (mp4a-latm, ac-3)');
+  });
+
+  it('is captured from the load event together with the formats', () => {
+    const at = screen.indexOf('audioFormatsOf(payload?.audioTracks ?? [])');
+    expect(at).toBeGreaterThan(-1);
+    expect(screen.slice(at - 300, at + 300)).toContain('anyAudioTrackSelected');
+    expect(screen.slice(at - 300, at + 300)).toContain('audioTrackCount');
   });
 });

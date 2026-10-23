@@ -39,6 +39,8 @@ import {
   EMPTY_LIVE_TELEMETRY,
   LIVE_BUFFER_CONFIG,
   LIVE_FORWARD_BUFFER_SECONDS,
+  anyAudioTrackSelected,
+  audioFormatsOf,
   formatLiveTelemetry,
   liveSilentStreamNotice,
   type LivePlaybackTelemetry,
@@ -549,6 +551,8 @@ export const LivePlayerScreen = ({
             setTelemetry((t) => ({
               ...t,
               audioTrackCount: payload?.audioTracks?.length ?? 0,
+              audioFormats: audioFormatsOf(payload?.audioTracks ?? []),
+              audioSelected: anyAudioTrackSelected(payload?.audioTracks ?? []),
             }));
             clearRetryTimer();
             setRetryNotice(null);

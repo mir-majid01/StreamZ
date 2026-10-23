@@ -68,7 +68,72 @@ export interface LivePlaybackTelemetry {
    * cannot be diagnosed from a screenshot.
    */
   audioTrackCount: number | null;
+  /**
+   * The audio formats the player was offered, as full MIME strings, e.g. `['audio/ac-3']`.
+   *
+   * react-native-video fills a track's `type` from `Format.sampleMimeType`, so this is the
+   * broadcaster's own answer about what its audio is — the only codec evidence this app can get
+   * without parsing the container itself, which three attempts at on-PC container sniffing have now
+   * failed to do reliably. It turns "no sound" into either "this stream carries no audio" or "this
+   * stream carries Dolby Digital and this phone has no decoder for it", and those two need
+   * completely different fixes.
+   */
+  audioFormats: string[];
+  /**
+   * Whether the player marked any audio track as selected.
+   *
+   * `true` with a decodable format and still no sound points at something this app controls
+   * (volume, audio focus, routing) rather than at the feed — so the distinction has to be kept.
+   */
+  audioSelected: boolean | null;
 }
+
+/**
+ * Codecs an Android phone is not guaranteed to decode. AAC is the one live IPTV audio format that
+ * is safe everywhere; Dolby and DTS profiles need a licensed decoder on the device, and MPEG
+ * Layer I/II audio has no MediaCodec decoder at all, so a stream carrying them plays in silence.
+ */
+const OFTEN_UNDECODABLE = [
+  // Longest patterns first: `audio/eac-3` also contains `ac-3`, and reading that first would
+  // tell the user "Dolby Digital" when the stream is actually Dolby Digital Plus.
+  ['eac-3', 'Dolby Digital Plus'],
+  ['ec-3', 'Dolby Digital Plus'],
+  ['dtshd', 'DTS-HD'],
+  ['dts-hd', 'DTS-HD'],
+  ['ac-3', 'Dolby Digital'],
+  ['dts', 'DTS'],
+  ['mp2', 'MPEG Layer II'],
+  ['mp1', 'MPEG Layer I'],
+] as const;
+
+/** The friendly name of a format this phone may not have a decoder for, or null if it is safe. */
+export const undecodableAudioFormat = (formats: readonly string[]): string | null => {
+  for (const format of formats) {
+    const mime = format.toLowerCase();
+    if (!mime.startsWith('audio/')) continue;
+    for (const [needle, label] of OFTEN_UNDECODABLE) {
+      if (mime.includes(needle)) return label;
+    }
+  }
+  return null;
+};
+
+/** Every audio format the player reported, as full MIME strings, deduplicated. */
+export const audioFormatsOf = (
+  tracks: readonly { type?: string | null; selected?: boolean | null }[],
+): string[] => [
+  ...new Set(
+    tracks
+      .map((t) => (t.type ?? '').toLowerCase())
+      .filter((t) => t.startsWith('audio/')),
+  ),
+];
+
+/** Whether any reported audio track is the one the player selected; null when none were reported. */
+export const anyAudioTrackSelected = (
+  tracks: readonly { selected?: boolean | null }[],
+): boolean | null =>
+  tracks.length === 0 ? null : tracks.some((t) => t.selected === true);
 
 export const EMPTY_LIVE_TELEMETRY: LivePlaybackTelemetry = {
   firstFrameMs: null,
@@ -76,6 +141,8 @@ export const EMPTY_LIVE_TELEMETRY: LivePlaybackTelemetry = {
   rebufferTotalMs: 0,
   playlistLatencyMs: null,
   audioTrackCount: null,
+  audioFormats: [],
+  audioSelected: null,
 };
 
 /**
@@ -92,7 +159,11 @@ export const formatLiveTelemetry = (
   if (telemetry.playlistLatencyMs !== null) parts.push(`playlist ${telemetry.playlistLatencyMs} ms`);
   // Printed even when it is zero: "the player found no audio track" is the finding, not an absence.
   if (telemetry.audioTrackCount !== null) {
-    parts.push(`${telemetry.audioTrackCount} audio track${telemetry.audioTrackCount === 1 ? '' : 's'}`);
+    const names = telemetry.audioFormats.map((f) => f.replace(/^audio\//, ''));
+    const suffix = names.length ? ` (${names.join(', ')})` : '';
+    parts.push(
+      `${telemetry.audioTrackCount} audio track${telemetry.audioTrackCount === 1 ? '' : 's'}${suffix}`,
+    );
   }
   if (telemetry.rebufferCount > 0) {
     parts.push(
@@ -108,16 +179,25 @@ export const formatLiveTelemetry = (
 /**
  * What to say when the picture is fine and the stream brought no sound.
  *
- * This is deliberately not a playback failure: nothing broke, so the failure panel — and with it
- * the whole telemetry line — never appears, and the viewer is left with a moving picture, no audio
- * and no explanation. The player's own track report is the only evidence the app has, so it is
- * spoken to the user instead of buried.
+ * This is deliberately not a playback failure: nothing broke, so the failure panel — and with it the
+ * whole telemetry line — never appears, and the viewer is left with a moving picture, no audio and
+ * no explanation. The player's own report is the only evidence the app has, so it is spoken to the
+ * user instead of buried.
  *
- * The wording covers both causes it can come from, because the two look identical here: the feed
- * may carry no audio at all, or the phone may have no decoder for the one it carries. Either way
- * the player was offered nothing it could play, and that is what the sentence says.
+ * It claims only what was observed. Two causes are named, because the player can tell them apart:
+ * a stream with no audio track at all, and a stream whose audio is a format this phone may not
+ * carry a licensed decoder for. A third possibility — audio selected and decodable, still silent —
+ * is left unspoken rather than guessed at, because nothing here can prove it from the player's
+ * report and a wrong diagnosis on screen is worse than none.
  */
-export const liveSilentStreamNotice = (telemetry: LivePlaybackTelemetry): string | null =>
-  telemetry.audioTrackCount === 0
-    ? 'No sound: this stream offered the player no playable audio track.'
-    : null;
+export const liveSilentStreamNotice = (telemetry: LivePlaybackTelemetry): string | null => {
+  if (telemetry.audioTrackCount === null) return null;
+  if (telemetry.audioTrackCount === 0) {
+    return 'No sound: this channel is not sending any audio.';
+  }
+  const label = undecodableAudioFormat(telemetry.audioFormats);
+  if (label !== null) {
+    return `No sound: this channel's audio is ${label}, which this phone may not be able to decode.`;
+  }
+  return null;
+};
