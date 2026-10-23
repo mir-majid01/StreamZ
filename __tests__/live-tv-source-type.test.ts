@@ -5,8 +5,13 @@
  * `.mpd`. react-native-video builds the ExoPlayer media source from that hint and never
  * sniffs the response, so those entries failed as a malformed playlist rather than playing.
  */
-import { liveSourceType } from '@/src/services/liveTv/sourceType';
+import { readFileSync } from 'fs';
+import path from 'path';
+import { liveSourceType, urlDeclaresContainer } from '@/src/services/liveTv/sourceType';
 import type { StreamProbeResult } from '@/src/services/liveTv/streamProbe';
+
+const ROOT = path.resolve(__dirname, '..');
+const screen = readFileSync(path.join(ROOT, 'src/screens/LivePlayerScreen.tsx'), 'utf8');
 
 describe('liveSourceType', () => {
   it('marks the dominant case, HLS with and without an extension', () => {
@@ -122,5 +127,63 @@ describe('liveSourceType with a probe', () => {
       }),
     ).toBe('m3u8');
     expect(liveSourceType('https://d.example/a/clip.mp4', null)).toBeUndefined();
+  });
+});
+
+describe('urlDeclaresContainer decides whether a tune may start without asking', () => {
+  it('trusts the extension for the shapes that name their container', () => {
+    expect(urlDeclaresContainer('https://d.example/live/a/index.m3u8')).toBe(true);
+    expect(urlDeclaresContainer('https://d.example/live/a/index.m3u')).toBe(true);
+    expect(urlDeclaresContainer('https://d.example/live/a/manifest.mpd')).toBe(true);
+    expect(urlDeclaresContainer('https://d.example/clip.mp4')).toBe(true);
+    expect(urlDeclaresContainer('https://d.example/live/a/stream.ts')).toBe(true);
+    // A query string must not hide the extension.
+    expect(urlDeclaresContainer('https://d.example/a/index.m3u8?token=7')).toBe(true);
+  });
+
+  it('refuses to guess for the paths that say nothing', () => {
+    expect(urlDeclaresContainer('https://d.example/real/CH_NEWS')).toBe(false);
+    // The measured shape that started this: HTTP 200, video/mp2t, no extension anywhere.
+    expect(urlDeclaresContainer('http://telekomsrbije.com:2095/play/lhpjmkfVyhON1JAiZCx7vgvje3t')).toBe(false);
+  });
+
+  it('survives a URL the parser cannot read', () => {
+    expect(urlDeclaresContainer('not a url at all')).toBe(false);
+    expect(urlDeclaresContainer('d.example/live/index.m3u8')).toBe(true);
+  });
+});
+
+describe('the live player asks the host before the first tune when the URL does not say', () => {
+  it('primes the container only for the URLs that need it', () => {
+    const prime = /const primeContainer = useCallback\(\s*async \(target: LiveStream\)[\s\S]*?\n {2}\);/.exec(screen);
+    expect(prime).not.toBeNull();
+    expect(prime![0]).toContain('urlDeclaresContainer(target.url)');
+    expect(prime![0]).toContain('await askTheHost(target)');
+  });
+
+  it('resolves the stream, asks, and only then hands the URL to the player', () => {
+    const start = screen.indexOf('const loadStream = useCallback');
+    const region = screen.slice(start, screen.indexOf('}, [primeContainer, resetAttemptState])', start));
+    const get = region.indexOf('DaddyLiveService.getStream');
+    const prime = region.indexOf('await primeContainer(resolved)');
+    const hand = region.indexOf('setStream(resolved)');
+    expect(get).toBeGreaterThan(-1);
+    expect(prime).toBeGreaterThan(get);
+    expect(hand).toBeGreaterThan(prime);
+  });
+
+  it('keeps the newest request in charge when the answer arrives late', () => {
+    const at = screen.indexOf('await primeContainer(resolved)');
+    const after = screen.slice(at, screen.indexOf('setStream(resolved)', at));
+    expect(after).toContain('requestId !== requestIdRef.current');
+  });
+
+  it('does not skip the question for a stream handed over by the caller', () => {
+    const at = screen.indexOf('await primeContainer(initialStream)');
+    expect(at).toBeGreaterThan(-1);
+    const after = screen.slice(at, screen.indexOf('DaddyLiveService.pushRecent(initialChannel.id)', at));
+    expect(after).toContain('requestId !== requestIdRef.current');
+    expect(after).toContain('setStream(initialStream)');
+    expect(after).toContain('setLoading(false)');
   });
 });

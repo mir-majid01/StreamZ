@@ -21,7 +21,7 @@ import {
   type LiveChannel,
   type LiveStream,
 } from '@/src/services/DaddyLiveService';
-import { liveSourceType } from '@/src/services/liveTv/sourceType';
+import { liveSourceType, urlDeclaresContainer } from '@/src/services/liveTv/sourceType';
 import {
   livePlaybackDetail,
   playbackErrorResourceUrl,
@@ -248,6 +248,26 @@ export const LivePlayerScreen = ({
     setAttemptToken((token) => token + 1);
   }, [cancelProbe, clearRetryTimer]);
 
+  /**
+   * Find out what the host is actually serving before the player is built — but only for the URLs
+   * that do not say.
+   *
+   * `liveSourceType` has to answer with a container hint because media3 chooses its parser from that
+   * hint and never sniffs the response, and its fallback for an unreadable path is HLS. A raw
+   * MPEG-TS body behind `…/play/<token>` therefore went to the HLS parser, failed the first tune,
+   * and only became playable once a retry had probed it and re-typed it — which is the "black
+   * screen, then it works when I tap again" report. One bounded request turns that guess into an
+   * observation up front. Channels whose URL already ends in `.m3u8` or `.mpd` skip it entirely, so
+   * the ~96% that describe themselves keep the immediate start they had before.
+   */
+  const primeContainer = useCallback(
+    async (target: LiveStream): Promise<void> => {
+      if (!target.url || urlDeclaresContainer(target.url)) return;
+      await askTheHost(target);
+    },
+    [askTheHost],
+  );
+
   const loadStream = useCallback(async (next: LiveChannel) => {
     // One token per request, and only the newest one may write. Channel taps are not
     // serialized: two taps start two resolvers, and whichever answered last used to win,
@@ -263,6 +283,10 @@ export const LivePlayerScreen = ({
     try {
       const resolved = await DaddyLiveService.getStream(next.id);
       if (requestId !== requestIdRef.current) return;
+      // Still inside the loading window on purpose: the player is not handed a URL until the
+      // answer that decides which parser builds it has arrived or timed out.
+      await primeContainer(resolved);
+      if (requestId !== requestIdRef.current) return;
       setChannel(next);
       setStream(resolved);
       void DaddyLiveService.pushRecent(next.id);
@@ -275,25 +299,34 @@ export const LivePlayerScreen = ({
         setResolvingId(null);
       }
     }
-  }, [resetAttemptState]);
+  }, [primeContainer, resetAttemptState]);
 
   useEffect(() => {
-    if (initialStream?.url) {
+    if (!initialStream?.url) {
+      void loadStream(initialChannel);
+      return;
+    }
+    // A stream handed over by the caller still needs the same up-front question when its URL
+    // does not name its container; skipping it here would leave that path with the old bug.
+    const requestId = ++requestIdRef.current;
+    void (async () => {
+      await primeContainer(initialStream);
+      if (!mountedRef.current || requestId !== requestIdRef.current) return;
       setChannel(initialChannel);
       setStream(initialStream);
       setLoading(false);
       void DaddyLiveService.pushRecent(initialChannel.id);
-      return;
-    }
-    void loadStream(initialChannel);
-  }, [initialChannel, initialStream, loadStream]);
+    })();
+  }, [initialChannel, initialStream, loadStream, primeContainer]);
 
   const source = useMemo<ReactVideoSource | null>(() => {
     if (!stream?.url) return null;
     return {
       uri: stream.url,
       // The probe's Content-Type outranks the URL's extension, and only a probe that saw a media
-      // type changes the answer; on first playback `probe` is null and this is the old heuristic.
+      // type changes the answer. `primeContainer` guarantees that question has been asked before
+      // the first tune whenever the path does not name its container; a self-describing `.m3u8`
+      // still starts on the extension alone, with no round trip in front of it.
       type: liveSourceType(stream.url, probe),
       headers: stream.headers,
     };
@@ -501,9 +534,17 @@ export const LivePlayerScreen = ({
           volume={volume}
           playInBackground={false}
           ignoreSilentSwitch="ignore"
-          onLoad={() => {
+          onLoad={(payload) => {
             // The stream opened and its index parsed, so anything raised later is mid-stream.
             playbackStartedRef.current = true;
+            // Counted from the player's own report, not from the playlist: this is the only place
+            // the app can learn whether the tune offered any audio at all. It is the difference
+            // between a feed that carries no sound and one whose audio was dropped downstream,
+            // and those two need different fixes — so the number goes on the failure panel too.
+            setTelemetry((t) => ({
+              ...t,
+              audioTrackCount: payload?.audioTracks?.length ?? 0,
+            }));
             clearRetryTimer();
             setRetryNotice(null);
             setRetriesSpent(null);

@@ -58,6 +58,16 @@ export interface LivePlaybackTelemetry {
   rebufferTotalMs: number;
   /** The journal's own read of the same stream, when the retry path ran. */
   playlistLatencyMs: number | null;
+  /**
+   * How many audio tracks the player found in this tune, or null when it never reported.
+   *
+   * `0` is the answer that separates two failures which look identical on screen and need
+   * different fixes: a feed that carries no audio at all (nothing the app can decode) against a
+   * feed whose audio is present but was dropped by selection or by a missing decoder. It is
+   * recorded even when it is zero, and even when playback is fine, because "video with no sound"
+   * cannot be diagnosed from a screenshot.
+   */
+  audioTrackCount: number | null;
 }
 
 export const EMPTY_LIVE_TELEMETRY: LivePlaybackTelemetry = {
@@ -65,6 +75,7 @@ export const EMPTY_LIVE_TELEMETRY: LivePlaybackTelemetry = {
   rebufferCount: 0,
   rebufferTotalMs: 0,
   playlistLatencyMs: null,
+  audioTrackCount: null,
 };
 
 /**
@@ -79,6 +90,10 @@ export const formatLiveTelemetry = (
   const parts: string[] = [];
   if (telemetry.firstFrameMs !== null) parts.push(`first frame ${telemetry.firstFrameMs} ms`);
   if (telemetry.playlistLatencyMs !== null) parts.push(`playlist ${telemetry.playlistLatencyMs} ms`);
+  // Printed even when it is zero: "the player found no audio track" is the finding, not an absence.
+  if (telemetry.audioTrackCount !== null) {
+    parts.push(`${telemetry.audioTrackCount} audio track${telemetry.audioTrackCount === 1 ? '' : 's'}`);
+  }
   if (telemetry.rebufferCount > 0) {
     parts.push(
       `${telemetry.rebufferCount} rebuffer${telemetry.rebufferCount === 1 ? '' : 's'} (${telemetry.rebufferTotalMs} ms)`,

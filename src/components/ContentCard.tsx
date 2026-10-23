@@ -48,10 +48,18 @@ export const ContentCard = ({
 }: ContentCardProps) => {
   const posterUrl = TMDBService.getImageUrl(item.poster_path, 'w300');
   const height = width * POSTER_ASPECT_RATIO;
-  // A poster URL that exists but cannot be fetched used to render an empty grey
-  // box: indistinguishable from missing artwork and with nothing to say about it.
-  const [imageFailed, setImageFailed] = useState(false);
-  const showFallback = !posterUrl || imageFailed;
+  /**
+   * Which poster URL failed, or null when nothing has failed.
+   *
+   * Recorded as a URL rather than a boolean because a card is reused for whatever item comes
+   * next — search results, a refetched row, a list that re-renders after returning from playback.
+   * A boolean flag says "this card is broken" and stays set, so the next title inherits the
+   * previous one's failure and shows its name where its artwork should be. Keying the flag to the
+   * URL makes it a fact about the thing actually being drawn: a new poster gets a fresh chance,
+   * and the same poster that failed keeps its fallback without silently retrying every render.
+   */
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const showFallback = !posterUrl || failedUrl === posterUrl;
 
   return (
     <Focusable
@@ -91,7 +99,7 @@ export const ContentCard = ({
               resizeMode="cover"
               className="h-full w-full"
               onError={() => {
-                setImageFailed(true);
+                setFailedUrl(posterUrl);
                 reportImageFailure();
               }}
             />

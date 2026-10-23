@@ -74,6 +74,7 @@ describe('play telemetry says only what it measured', () => {
         rebufferCount: 2,
         rebufferTotalMs: 4300,
         playlistLatencyMs: 412,
+        audioTrackCount: null,
       }),
     ).toBe('first frame 900 ms · playlist 412 ms · 2 rebuffers (4300 ms)');
   });
@@ -111,5 +112,34 @@ describe('the screen actually uses the tuning and the instrumentation', () => {
 
   it('shows the numbers only on the failure panel', () => {
     expect(screen).toContain('{telemetryLine ?');
+  });
+});
+
+describe('the player reports whether a tune carried any audio', () => {
+  it('starts unknown, not at zero', () => {
+    // A tune that never loaded has not been measured; claiming "0 audio tracks" would be a
+    // statement about a stream the player never read.
+    expect(EMPTY_LIVE_TELEMETRY.audioTrackCount).toBeNull();
+    expect(formatLiveTelemetry(EMPTY_LIVE_TELEMETRY)).toBe('');
+  });
+
+  it('prints the zero case, because no-audio is the finding', () => {
+    expect(formatLiveTelemetry({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 0 })).toBe(
+      '0 audio tracks',
+    );
+    expect(formatLiveTelemetry({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 1 })).toBe(
+      '1 audio track',
+    );
+    expect(formatLiveTelemetry({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 3 })).toContain(
+      '3 audio tracks',
+    );
+  });
+
+  it('is captured from the player event, not from the playlist text', () => {
+    const at = screen.indexOf('onLoad={(payload)');
+    expect(at).toBeGreaterThan(-1);
+    const body = screen.slice(at, at + 700);
+    expect(body).toContain('audioTracks?.length ?? 0');
+    expect(body).toContain('audioTrackCount');
   });
 });

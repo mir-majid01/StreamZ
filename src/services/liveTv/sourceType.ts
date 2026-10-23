@@ -33,6 +33,32 @@ import {
 
 export type LiveSourceType = 'm3u8' | 'mpd' | undefined;
 
+/** Path suffixes that say which container follows: playlist, manifest, or progressive file. */
+const SELF_DESCRIBING = /\.(m3u8|m3u|mpd|ism|isml|mp4|mkv|webm|mov|ts)$/i;
+
+/**
+ * Whether the URL itself names the container, so the player can be built without asking.
+ *
+ * This decides whether a tune may start immediately or must wait one bounded round trip. It
+ * matters because `ReactExoplayerView.buildMediaSource` picks the parser from the hint alone —
+ * media3 never sniffs the response — and `liveSourceType` answers every unknown shape with
+ * `'m3u8'`. For the ~5% of catalogue entries whose path has no extension (`…/play/<token>`,
+ * `…/live/whatever`) that answer is sometimes wrong: the measured probe showed hosts such as
+ * `telekomsrbije.com:2095/play/…` answering `200` with `video/mp2t`, a raw MPEG-TS body. Handing
+ * that to the HLS parser fails the first tune, and only the *retry* — which probes, and then maps
+ * `video/…` to a progressive source — can play it. Channels therefore appeared dead on first try
+ * and alive on the second, which is the behaviour reported as "sometimes it works when I tap again".
+ */
+export const urlDeclaresContainer = (url: string): boolean => {
+  let path = url;
+  try {
+    path = new URL(url).pathname;
+  } catch {
+    // Same rule as `liveSourceType`: a URL the parser cannot read still deserves extension matching.
+  }
+  return SELF_DESCRIBING.test(path.split('?')[0]);
+};
+
 export const liveSourceType = (
   url: string,
   probe?: StreamProbeResult | null,

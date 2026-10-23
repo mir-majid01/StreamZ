@@ -20,8 +20,8 @@ jobs:
       # end up higher than what is already on a phone before `releasePolicy/latest` can offer this
       # build as an update: `decideUpdate` compares against the installed version, and an APK that
       # is not newer is correctly reported as "up to date" and never installed.
-      APP_VERSION: '0.1.5'
-      ANDROID_VERSION_CODE: '6'
+      APP_VERSION: '0.1.6'
+      ANDROID_VERSION_CODE: '7'
     steps:
       - uses: actions/checkout@v4
 
