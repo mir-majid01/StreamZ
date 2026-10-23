@@ -40,6 +40,7 @@ import {
   LIVE_BUFFER_CONFIG,
   LIVE_FORWARD_BUFFER_SECONDS,
   formatLiveTelemetry,
+  liveSilentStreamNotice,
   type LivePlaybackTelemetry,
 } from '@/src/services/liveTv/livePlaybackTuning';
 import { FONT } from '@/src/theme/tokens';
@@ -140,6 +141,10 @@ export const LivePlayerScreen = ({
   const diagnosticSummary = playbackDiagnosticSummary(playbackDiagnostics);
   // Measured, not inferred: a tune that never produced a frame says so by saying nothing.
   const telemetryLine = formatLiveTelemetry(telemetry);
+  // Shown while the picture plays: a silent stream is not an error, so the failure panel below
+  // would never appear, and the viewer would be left with moving pictures, no sound, and no word
+  // about which of the two causes it is.
+  const silentNotice = liveSilentStreamNotice(telemetry);
 
   // The window itself (landscape, hidden system bars, and giving both back on the way out) is
   // owned by the shared hook, because the same chrome is what made the tab bar jump after a movie
@@ -665,6 +670,19 @@ export const LivePlayerScreen = ({
             </Button>
           </HStack>
         </Center>
+      ) : null}
+
+      {silentNotice !== null && !error && !loading ? (
+        // Top-centred, transparent to touch, and only when nothing else is on screen: the picture
+        // is playing, so this must not cover it or steal a press meant for the controls.
+        <Box pointerEvents="none" className="absolute left-0 right-0 top-0 items-center pt-3">
+          <Text
+            size="xs"
+            className="max-w-2xl rounded-full bg-black/70 px-4 py-2 text-center text-destructive"
+          >
+            {silentNotice}
+          </Text>
+        </Box>
       ) : null}
 
       {visible && !loading ? (

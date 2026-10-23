@@ -104,3 +104,20 @@ export const formatLiveTelemetry = (
   if (options.rebuffering) parts.push('buffering now');
   return parts.join(' · ');
 };
+
+/**
+ * What to say when the picture is fine and the stream brought no sound.
+ *
+ * This is deliberately not a playback failure: nothing broke, so the failure panel — and with it
+ * the whole telemetry line — never appears, and the viewer is left with a moving picture, no audio
+ * and no explanation. The player's own track report is the only evidence the app has, so it is
+ * spoken to the user instead of buried.
+ *
+ * The wording covers both causes it can come from, because the two look identical here: the feed
+ * may carry no audio at all, or the phone may have no decoder for the one it carries. Either way
+ * the player was offered nothing it could play, and that is what the sentence says.
+ */
+export const liveSilentStreamNotice = (telemetry: LivePlaybackTelemetry): string | null =>
+  telemetry.audioTrackCount === 0
+    ? 'No sound: this stream offered the player no playable audio track.'
+    : null;

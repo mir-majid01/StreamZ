@@ -13,6 +13,7 @@ import {
   LIVE_BUFFER_CONFIG,
   LIVE_FORWARD_BUFFER_SECONDS,
   formatLiveTelemetry,
+  liveSilentStreamNotice,
 } from '@/src/services/liveTv/livePlaybackTuning';
 
 const ROOT = path.resolve(__dirname, '..');
@@ -141,5 +142,36 @@ describe('the player reports whether a tune carried any audio', () => {
     const body = screen.slice(at, at + 700);
     expect(body).toContain('audioTracks?.length ?? 0');
     expect(body).toContain('audioTrackCount');
+  });
+});
+
+describe('a silent live stream says so while it is playing', () => {
+  it('says nothing until the player has reported', () => {
+    // null means "not measured"; printing "0 audio tracks" for a tune that never loaded would be
+    // a claim about a stream the player never read.
+    expect(liveSilentStreamNotice(EMPTY_LIVE_TELEMETRY)).toBeNull();
+    expect(liveSilentStreamNotice({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 2 })).toBeNull();
+  });
+
+  it('names what the player saw, without picking between the two causes', () => {
+    const notice = liveSilentStreamNotice({ ...EMPTY_LIVE_TELEMETRY, audioTrackCount: 0 });
+    expect(notice).toContain('No sound');
+    expect(notice).toContain('no playable audio track');
+    // The feed may carry none, or the phone may not decode the one it carries. From here those
+    // two are indistinguishable, so the sentence claims only the observation.
+    expect(notice).not.toMatch(/this channel has no audio|broken channel/i);
+  });
+
+  it('is rendered over playback rather than only on the failure panel', () => {
+    const at = screen.indexOf('silentNotice !== null');
+    expect(at).toBeGreaterThan(-1);
+    const before = screen.slice(0, at);
+    expect(before).toContain('const silentNotice = liveSilentStreamNotice(telemetry)');
+    const block = screen.slice(at, screen.indexOf('{visible && !loading ?', at));
+    expect(block).toContain('!error');
+    expect(block).toContain('!loading');
+    // Touch-through: the picture is playing and the bar must not eat a press meant for the controls.
+    expect(block).toContain('pointerEvents="none"');
+    expect(block).toContain('{silentNotice}');
   });
 });
